@@ -1,4 +1,4 @@
-module webdavgo
+module github.com/joernfeuerabend/webdavgo
 
 go 1.26.0
 
