@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Jörn Feuerabend
+
+# Attaches the Linux release binaries to a GitHub release once it is
+# published.
+
+name: release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - name: Check tag
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          then
+            echo "release tag $TAG does not match vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
+
+      # Full history and tags, so that git describe in the Makefile yields
+      # the tag as version.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # No module cache, so release binaries never build from a cache
+      # written by another workflow run.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: Build
+        run: make dist
+
+      # cp fails if make dist did not take the tag as version.
+      - name: Package
+        run: |
+          version=${TAG#v}
+          out=$RUNNER_TEMP/release
+          mkdir -p "$out"
+          for arch in amd64 arm64
+          do
+            stage=$RUNNER_TEMP/stage-$arch
+            mkdir -p "$stage"
+            cp "dist/webdavgo-$TAG-linux-$arch" "$stage/webdavgo"
+            cp dist/LICENSE dist/THIRD_PARTY_LICENSES "$stage/"
+            tar -czf "$out/webdavgo_${version}_linux_$arch.tar.gz" \
+              --owner=0 --group=0 --numeric-owner \
+              -C "$stage" webdavgo LICENSE THIRD_PARTY_LICENSES
+          done
+          cd "$out"
+          sha256sum -- *.tar.gz > SHA256SUMS
+
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$TAG" --clobber \
+            "$RUNNER_TEMP"/release/*.tar.gz "$RUNNER_TEMP/release/SHA256SUMS"
