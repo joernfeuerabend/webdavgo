@@ -18,7 +18,8 @@ shares, quota counters, setup token, session epochs), no configuration.
 | `-log-level <level>` | overrides `log_level` |
 
 Subcommands: `install`, `uninstall` (see [Deployment](installation.md#deployment-with-webdavgo-install)),
-`setup-info` and `reset-totp` (see [Admin access](administration.md#admin-access)).
+`setup-info` and `reset-totp` (see [Admin access](administration.md#admin-access)),
+`healthcheck` (see [Health checks](administration.md#health-checks)).
 
 Precedence: **flag > config file > default.** The admin UI's **Settings**
 page edits every key of the same file (see [Settings page](#settings-page)).
@@ -56,6 +57,9 @@ as one `config` line.
 | `webdav_listen_address` | `""` | host name or IP address the WebDAV listener binds to, without port. Empty = all interfaces |
 | `webgui_port` | `8443` | port of the admin listener (1-65535) |
 | `webgui_listen_address` | `""` | host name or IP address the admin listener binds to, without port. Empty = all interfaces (see [Admin access](administration.md#admin-access)) |
+| `health_enabled` | `false` | run the health listener (see [Health checks](administration.md#health-checks)) |
+| `health_bind` | `"127.0.0.1"` | host name or IP address the health listener binds to, without port. Empty = all interfaces |
+| `health_port` | `8082` | port of the health listener (1-65535). Must differ from `webdav_port` and `webgui_port` |
 | `tls_mode` | `"off"` | `off` (plain HTTP) or `acme` (TLS with an ACME certificate, see [Internet deployment](installation.md#internet-deployment)) |
 | `require_tls` | `false` | with `tls_mode = "off"`, do not start the WebDAV listener on a non-loopback address (see [`require_tls`](installation.md#deployment-with-webdavgo-install)) |
 | `domain` | none | public DNS name of the server, required with `tls_mode = "acme"` |
@@ -85,9 +89,9 @@ durations in whole seconds, sizes in KB and rates in KB/s (decimal, 1 KB =
 
 ## Settings page
 
-**Admin → Settings** shows every key above in one of six sections (Network &
+**Admin → Settings** shows every key above in one of eight sections (Network &
 listeners, TLS & domain, Connections & limits, Brute-force protection,
-WebDAV, Logging), each with its saved value, a short description and its
+WebDAV, Users, Logging, Health), each with its saved value, a short description and its
 default, plus the config file path. Every field is editable except where
 there is a technical reason, which is shown next to the field: `data_dir`
 (the database lives in it), the config file path (set by the service unit or

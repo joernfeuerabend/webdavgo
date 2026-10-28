@@ -124,7 +124,7 @@ Data and configuration are kept.
 
 CalDAV/CardDAV, office integration, media galleries, plugin system.
 
-- Behind-proxy mode (`X-Forwarded-For`), DNS-01 challenges, own certificates
+- DNS-01 challenges, own certificates
 - Environment variables for configuration
 - Cross-user shares where the recipient is themselves a webdavgo user with
   their own filesystem (a recipient is identified solely by email and holds a

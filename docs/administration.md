@@ -410,6 +410,57 @@ GOAWAY …` at Debug (a browser closing its HTTP/2 connection), everything
 else at Warn. `admin request rejected: cross-origin`, `webdav internal
 error` and `password reset` carry `client`.
 
+## Health checks
+
+The health listener serves `/livez` and `/readyz` for container runtimes,
+load balancers and `webdavgo healthcheck`. It is off by default. Set
+`health_enabled = true` to start it on `health_bind` (default
+`"127.0.0.1"`) and `health_port` (default `8082`), in the config file or in
+the **Health** section of **Admin → Settings**. Apply moves it without a
+restart: the old listener stops first, then the new one starts. If the new
+one cannot bind, the old one is restored and the page reports the error.
+Turning it off is logged at Info as `health listener stopped`. If it cannot
+bind at startup, the server exits with `health listener failed`.
+
+The listener speaks plain HTTP and has no authentication, so keep it on
+`127.0.0.1` unless something outside the host must reach it. Its responses
+carry only `ok` or a short reason, never paths, versions or error details.
+`health_port` must be between 1 and 65535 and, while the listener is
+enabled, differ from `webdav_port` and `webgui_port` (by port alone,
+whatever the addresses). `health_bind` is empty (all interfaces) or a host
+name or IP address without port.
+
+| Path | 200 `ok` when | Otherwise |
+|------|---------------|-----------|
+| `/livez` | the admin listener runs and no listener has failed | 503 `not serving` |
+| `/readyz` | a probe file (`.readyz-*`) can be created, written and deleted in `data_dir`, and the database answers a ping within 2 s | 503 `data directory not writable` or `database unreachable`, with the details logged at Warn |
+
+Only GET and HEAD are allowed (others get 405 with `Allow: GET, HEAD`).
+Every other path gets 404, and every response carries
+`Cache-Control: no-store`. Each probe is logged at Debug as a `request` line
+with `listener=health`, `path`, `client` and `ok`. The listener accepts at
+most 8 connections at a time, separately from `max_connections`, and its
+probes do not appear on the Status page. A client gets 5 s to send the
+headers (at most 8 KiB) and 10 s each for reading the request and writing
+the response. Idle connections close after 60 s.
+
+**`webdavgo healthcheck [-config <path>]`** sends `GET /readyz` to the
+health listener named in the config file and exits 0 on 200, otherwise 1. It
+reads the config file and nothing else (no database, no data directory, no
+log files) and never creates the file. A wildcard `health_bind` (`""` or
+`0.0.0.0`) is reached at `127.0.0.1`, `::` at `::1`. Proxy variables from the
+environment are ignored and the request times out after 3 s. On failure it
+prints one line to stderr, for example `healthcheck: 503 Service Unavailable:
+database unreachable`. With `health_enabled = false` it exits 1 with
+`healthcheck: health listener disabled in config`.
+
+**systemd watchdog.** Independent of the health listener, the server
+reports `READY=1` to systemd once its listeners serve. The unit written by
+`webdavgo install` sets `Type=notify` and `WatchdogSec=30s`. The server then
+pings the watchdog every half interval, but only while the `/livez` check
+passes, so systemd restarts a process that is no longer live. A skipped ping
+is logged at Warn.
+
 ## Emergency recovery
 
 If you have changed the listener addresses to something unreachable, edit
