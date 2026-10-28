@@ -113,6 +113,119 @@ the user and systemctl steps (used by test.sh).
 Then, in the browser: setup (admin account) → TOTP → **Domain &
 certificate** → done.
 
+## Container
+
+The image `joernfeuerabend/webdavgo` on Docker Hub (linux/amd64 and
+linux/arm64) holds the release binary on a distroless base without a shell.
+It runs as UID/GID 65532. Tags are the version (`0.1.0`), the minor
+version (`0.1`) and `latest` for releases that are not prereleases.
+
+```sh
+docker run -d --name webdavgo \
+  -p 443:443 -p 8443:8443 \
+  -v webdavgo:/var/lib/webdavgo \
+  --stop-timeout 35 \
+  joernfeuerabend/webdavgo:0.1
+```
+
+With Compose:
+
+```yaml
+services:
+  webdavgo:
+    image: joernfeuerabend/webdavgo:0.1
+    ports:
+      - "443:443"
+      - "8443:8443"
+      # WebDAV over plain HTTP, only used before a certificate exists.
+      # - "8080:8080"
+    volumes:
+      - webdavgo:/var/lib/webdavgo
+    stop_grace_period: 35s
+
+volumes:
+  webdavgo:
+```
+
+The volume `/var/lib/webdavgo` holds everything: the config file
+(`/etc/webdavgo` is a symlink to it), the database, the users' files and
+the certificates. Port 8080 serves WebDAV without TLS until **Domain &
+certificate** has obtained one. After that WebDAV moves to 443. Publish 8080
+(`-p 8080:8080`) only if you need WebDAV before that. The stop timeout of
+35 seconds leaves room for `shutdown_timeout` (30 s by default). Docker's
+default of 10 seconds would cut running requests.
+
+**Port 443** must be published as `443:443`. The certificate request uses
+the TLS-ALPN-01 challenge, which the CA always sends to port 443, and
+webdavgo answers it on its own port 443.
+
+**First start.** The setup URL with its token is in `docker logs webdavgo`.
+`docker exec webdavgo webdavgo setup-info` prints it again, with a new token
+once the old one has expired. The printed URLs show the container's
+addresses, which are not reachable from outside the host. Open the admin UI
+at the host's address instead, `https://<host>:8443/`. While no admin exists
+it leads to the setup page, which asks for the token: copy the value after
+`token=` from the printed URL. Then continue as in the
+[Quick start](../README.md#quick-start).
+
+**Config file.** A new container creates the config file from
+`webdavgo.example.conf` with `health_enabled = true`, `access_log = ""` and
+`server_log = ""`. All logs go to stdout (`docker logs`, see
+[Log files](administration.md#log-files)), and the image's `HEALTHCHECK`
+runs `webdavgo healthcheck` against the health listener on 127.0.0.1:8082
+inside the container (see [Health checks](administration.md#health-checks)).
+An existing config file in the volume is never changed.
+
+**Bind mount.** A host directory instead of the named volume
+(`-v /srv/webdavgo:/var/lib/webdavgo`) must be writable by UID 65532:
+`sudo chown 65532:65532 /srv/webdavgo`.
+
+**Client IPs.** Brute-force protection and the per-client limits
+(`max_connections_per_ip`, `unauth_rate`) use the source address of the
+connection. Docker keeps it for IPv4. Without IPv6 enabled in the Docker
+network, IPv6 clients arrive through docker-proxy with one shared address
+and share one set of limits: one client's failed logins can lock out all
+others. Enable IPv6 for the network the container uses, so that Docker
+forwards IPv6 connections itself and keeps the client address. With
+Compose:
+
+```yaml
+networks:
+  default:
+    enable_ipv6: true
+```
+
+With `docker run`, create a network with `docker network create --ipv6
+webdavgo` and add `--network webdavgo`.
+
+**Verify the signature.** Each image is signed with cosign in keyless mode
+by the release workflow of `joernfeuerabend/webdavgo`:
+
+```sh
+VERSION=0.1.0
+cosign verify joernfeuerabend/webdavgo:$VERSION \
+  --certificate-identity "https://github.com/joernfeuerabend/webdavgo/.github/workflows/release.yml@refs/tags/v$VERSION" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+The image also carries a provenance attestation and an SBOM
+(`docker buildx imagetools inspect joernfeuerabend/webdavgo:$VERSION`).
+
+**Build the image locally** from a release archive (downloaded and verified
+as in the [Quick start](../README.md#quick-start)). The Dockerfile does not
+compile anything. It expects the binary at `linux/<arch>/webdavgo` and the
+license files in the build context:
+
+```sh
+VERSION=0.1.0
+ARCH=amd64
+mkdir -p context/linux/$ARCH
+tar -xzf webdavgo_${VERSION}_linux_$ARCH.tar.gz -C context/linux/$ARCH webdavgo
+tar -xzf webdavgo_${VERSION}_linux_$ARCH.tar.gz -C context LICENSE THIRD_PARTY_LICENSES
+curl -LO https://raw.githubusercontent.com/joernfeuerabend/webdavgo/v$VERSION/Dockerfile
+docker build -f Dockerfile --build-arg VERSION=$VERSION -t webdavgo:$VERSION context
+```
+
 **`webdavgo setup-info`** prints the same information again at any time
 (`sudo webdavgo setup-info`). As root it
 runs itself as the `webdavgo` user so that no root-owned database files

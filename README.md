@@ -111,6 +111,8 @@ Setup token expired? `sudo webdavgo setup-info` prints a new one. To
 update, download a newer release and run `sudo ./webdavgo install` again.
 Data and configuration are kept.
 
+To run webdavgo with Docker instead, see [Container](docs/installation.md#container).
+
 ## Documentation
 
 - [Installation](docs/installation.md): first start, `webdavgo install`, domain and certificate, internet deployment
