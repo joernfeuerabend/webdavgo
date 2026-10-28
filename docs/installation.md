@@ -1,0 +1,228 @@
+# Installation
+
+## Run
+
+```sh
+./webdavgo                               # /etc/webdavgo/webdavgo.conf, created with the defaults if missing
+./webdavgo -config ./webdavgo.conf       # likewise created if missing
+```
+
+On first start, the console prints:
+
+```
+SETUP REQUIRED
+The admin UI is listening on all interfaces (port 8443) – reachable from any network that can reach port 8443.
+Open one of these URLs in a browser:
+  https://192.0.2.20:8443/setup?token=<hex>
+  https://[2001:db8::20]:8443/setup?token=<hex>
+  https://localhost:8443/setup?token=<hex>
+<QR code for the first LAN IPv4 URL>
+Admin certificate SHA-256 fingerprint: 83:27:50:…:AC:49
+The browser will warn that the certificate is self-signed; continue only if it shows this fingerprint.
+Token expires at <time>
+```
+
+There is one URL per LAN address of the host (IPv4 first), plus `localhost`.
+The QR code is meant for a phone on the same network. The second line names
+the address the admin listener is actually bound to (see
+[Admin access](administration.md#admin-access)). webdavgo cannot see a firewall or router in
+front of the host, so it never claims that the port is private. Open a URL, accept the
+self-signed certificate after comparing its fingerprint (see
+[Admin access](administration.md#admin-access)), and create the admin account. Setup then
+continues directly with the TOTP enrolment for that account. It is complete,
+and WebDAV starts serving (503 until then), once a first code is confirmed and
+the recovery codes have been shown. No restart is needed.
+
+The token is stored in the database and survives a restart. `webdavgo
+setup-info` prints the URLs again (with a new token once the old one has
+expired).
+
+On subsequent starts the setup wizard is skipped: the admin account already
+exists in the database.
+
+## Running as a service
+
+On SIGINT or SIGTERM (Ctrl-C, `systemctl stop`) the server stops accepting
+connections, lets in-flight requests finish for up to `shutdown_timeout`,
+closes the database and exits 0. Requests still running after the timeout are
+cut. The log states how many connections were closed, and the exit code is
+still 0. An interrupted upload never replaces the old file and its temporary
+file is removed. A second Ctrl-C during the grace period ends the process
+immediately.
+
+Leftover `.webdavgo-tmp-*` files from a process that was killed hard
+(`kill -9`, OOM, power loss) are deleted at the next start, before the
+listeners open. Each deleted file is logged at Warn.
+
+## Deployment with `webdavgo install`
+
+On Linux with systemd, one command sets up the service. Everything else
+happens in the browser:
+
+```sh
+sudo ./webdavgo install
+```
+
+It prints its plan first, then:
+
+1. copies the running binary to `/usr/local/bin/webdavgo` (temporary file +
+   rename). Running `install` from a newer binary is the update path, and a
+   running service is restarted to pick it up.
+2. creates the system user and group `webdavgo` (no login shell, no home).
+3. creates `/etc/webdavgo` and `/var/lib/webdavgo` (both webdavgo:webdavgo,
+   0750). The service saves to its config file through a temporary file and a
+   rename in that directory.
+4. writes `/etc/webdavgo/webdavgo.conf` (webdavgo:webdavgo, 0640) **only if
+   it does not exist**, from `webdavgo.example.conf` with
+   `data_dir = "/var/lib/webdavgo"`, `require_tls = true`,
+   `access_log = "/var/log/webdavgo/access.log"` and
+   `server_log = "/var/log/webdavgo/webdavgo.log"` set. An existing
+   `webdavgo.conf` is kept as it is (only owner and mode are enforced). If it
+   does not set `access_log` or `server_log`, the plan says that their
+   defaults apply, so the log files are written under `/var/log/webdavgo` all
+   the same.
+5. writes `/etc/systemd/system/webdavgo.service`, a hardened unit: runs as
+   `webdavgo`, `NoNewPrivileges`, `ProtectSystem=strict` with
+   `ReadWritePaths=/var/lib/webdavgo /etc/webdavgo`, `ProtectHome`, `PrivateTmp`,
+   `PrivateDevices`, kernel/cgroup protection, `RestrictAddressFamilies`,
+   `RestrictNamespaces`, `LockPersonality`, `MemoryDenyWriteExecute`,
+   `RestrictSUIDSGID`, `RestrictRealtime`, `ProtectClock`, `ProtectHostname`,
+   `ProtectProc=invisible`, `SystemCallFilter=@system-service` (other calls
+   fail with EPERM), `SystemCallArchitectures=native`, `UMask=0027`, and only
+   `CAP_NET_BIND_SERVICE` (for port 443). `LogsDirectory=webdavgo` lets
+   systemd create `/var/log/webdavgo` (webdavgo:webdavgo, 0750) and makes it
+   writable inside `ProtectSystem=strict`. stdout and stderr go to journald
+   (see [Log files](administration.md#log-files)).
+6. writes `/etc/logrotate.d/webdavgo` (0644, see [Log files](administration.md#log-files)),
+   also when logrotate is not installed, which the plan then points out.
+7. runs `systemctl daemon-reload` and `systemctl enable --now webdavgo`.
+8. prints where the admin listener is bound and how far it is reachable, the
+   admin URLs (`https://<LAN address>:8443/admin/`), the admin
+   certificate's SHA-256 fingerprint and, while no admin exists, the setup URL
+   with its token and a QR code. After an update that changes the database
+   schema it first waits (up to two minutes, "Waiting for the service to
+   migrate the database ...") until the restarted service has migrated it.
+
+Running it again changes nothing that exists: data, config and the admin
+certificate are kept. It refuses to run as non-root and on systems other than
+Linux with systemd. `-root DIR` writes everything below `DIR` instead and skips
+the user and systemctl steps (used by test.sh).
+
+Then, in the browser: setup (admin account) → TOTP → **Domain &
+certificate** → done.
+
+**`webdavgo setup-info`** prints the same information again at any time
+(`sudo webdavgo setup-info`). As root it
+runs itself as the `webdavgo` user so that no root-owned database files
+appear. The setup token lives in the database, valid for one hour. Once it
+has expired, `setup-info` issues a new one that the running service accepts.
+After setup it only says that setup is complete.
+
+**`webdavgo uninstall`** stops and disables the service and removes the
+unit, `/etc/logrotate.d/webdavgo` and the binary. It keeps `/etc/webdavgo`,
+`/var/lib/webdavgo` and `/var/log/webdavgo` and says so. `-purge` also
+removes all three and the system user, after you type the hostname (or with
+`-yes`).
+
+**`require_tls = true`** (set by `install`): as long as `tls_mode` is `off`,
+the WebDAV listener is not started on a network address (logged at Warn).
+Binding it to a loopback address (`webdav_listen_address = "127.0.0.1"`) is still allowed.
+The admin listener runs as usual, so the Settings page can turn TLS on.
+
+## Domain & certificate
+
+**Admin → Settings → TLS & domain** (the first setup leads there after the
+recovery codes). Set `tls_mode` to `acme`, enter the domain and, optionally,
+an e-mail address for the CA, then **Save** or **Apply**. Both run the
+certificate request with the submitted values, whose progress page
+(`/admin/domain`) shows it step by step. The config file must only hold a
+consistent configuration, so nothing of it is written before the certificate
+has been obtained:
+
+1. **DNS:** the domain's A/AAAA records are listed. If none of them is an
+   address of this host, that is a warning only (normal behind a NAT router).
+   A name that does not resolve at all is an error (except with a custom
+   `acme_ca`, which may resolve names its own way).
+2. **Port 443:** webdavgo opens a TLS listener on `:443`. Errors explain
+   "permission denied" (CAP_NET_BIND_SERVICE) and "already in use" (another
+   web server). A behind-proxy mode is not supported yet.
+3. **Trial order** at Let's Encrypt staging when `acme_ca = "production"`,
+   to keep mistakes away from production rate limits. `acme_trial_ca`
+   overrides or disables it, and a custom `acme_ca` gets none by default.
+4. **Certificate** from `acme_ca`.
+5. **Switch:** `tls_mode = "acme"`, `domain`, `acme_email`, `acme_ca`,
+   `acme_trial_ca`, `acme_ca_root` and `webdav_port = 443` are saved to
+   the config file in one write. The new TLS listener takes
+   over and the old plaintext listener stops accepting connections and
+   finishes its running requests (up to `shutdown_timeout`). No restart.
+
+Failures are reported in plain English (for example "Port 443 is not
+reachable from the internet" with a hint to check port forwarding, or "DNS
+for … does not point to this server") with the CA's error in a details
+element. The old listener keeps running
+and nothing was saved: the config file is unchanged, and the TLS & domain
+section shows the submitted values with the error, to correct and send
+again. The **finish page** (`/admin/domain/done`) shows the certificate status
+(issuer, expiry, next renewal or ARI window, last error), the public WebDAV
+URL `https://<domain>/` and a QR code of that URL for the iOS app.
+
+## Internet deployment
+
+With `tls_mode = "acme"` webdavgo gets and renews its own certificate from an
+ACME CA (Let's Encrypt by default) using the TLS-ALPN-01 challenge, which is
+answered on the WebDAV listener itself. There is no plaintext WebDAV listener
+then, so Basic Auth credentials only ever travel over TLS. With
+`tls_mode = "off"` the server logs a Warn at startup that credentials are sent
+in clear text: use it for development or on a trusted LAN only.
+
+### Setup
+
+The setup in the browser is described in the [Quick start](../README.md#quick-start).
+It needs the same network preparation:
+
+1. **DNS.** Create an A record (and AAAA, if the host has public IPv6) for
+   the domain, pointing at your public address.
+2. **Port forwarding.** Forward external TCP port **443** to the WebDAV
+   listener (with a config file, set `webdav_port` to 443 or forward to the
+   configured port). The CA always validates on port 443. Other external
+   ports cannot work with TLS-ALPN-01.
+3. **The admin port** (default 8443) needs no forwarding. Restrict it with
+   `webgui_listen_address` or a firewall and use an SSH tunnel for remote
+   administration (see [Admin access](administration.md#admin-access)).
+
+Instead of [Settings → TLS & domain](#domain--certificate), the config file
+can enable ACME. Start with the staging CA:
+
+```toml
+tls_mode   = "acme"
+domain     = "dav.example.com"
+acme_email = "admin@example.com"   # optional, for expiry notices
+acme_ca    = "staging"             # first; see below
+```
+
+The server then obtains the certificate in the background and logs
+`certificate obtained` or, at Error level, `certificate obtain failed`
+(CertMagic retries with backoff). Once a staging certificate is obtained
+(clients do not trust it yet), set `acme_ca = "production"` and restart.
+Starting with staging keeps configuration mistakes away from Let's Encrypt's
+production rate limits.
+
+The listener speaks HTTP/1.1 and HTTP/2, TLS 1.2 minimum with Go's default
+cipher suites, and sends
+`Strict-Transport-Security: max-age=31536000; includeSubDomains` on every
+response (no `preload`, and no OCSP stapling, as Let's Encrypt no longer
+runs OCSP). Plain HTTP sent to the TLS port is not served: Go answers 400
+or closes the connection, without ever asking for credentials.
+
+**Renewal** needs no configuration. There are no fixed deadlines: CertMagic
+renews when a third of the certificate's lifetime is left, or earlier when
+the CA's ACME Renewal Information (ARI, RFC 9773) says so, which also covers
+shorter certificate lifetimes. **Admin → Settings → TLS & domain** shows the domain, the
+issuer, the certificate's expiry, the next renewal (the time CertMagic picked
+in the CA's ARI window, or the estimate "a third of the lifetime left"), the
+last successful obtain or renewal, the last error, and a warning once less
+than a third of the lifetime is left (renewal is then overdue).
+
+**Back up `cert_dir`** (default `<data_dir>/certs`) together with
+`data_dir`. It holds the ACME account and the certificate, so a restart or a
+restored backup reuses them instead of placing a new order.
