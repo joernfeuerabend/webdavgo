@@ -315,14 +315,32 @@ func configPaths(flagPath string) (path, old string) {
 	return flagPath, ""
 }
 
+// containerMode is set by the container image (WEBDAVGO_CONTAINER=1). It
+// only selects the text createConfigFile writes.
+var containerMode = os.Getenv("WEBDAVGO_CONTAINER") == "1"
+
+// containerConfigText is the example as a new container needs it: the
+// health listener for the image's HEALTHCHECK, and both logs on stdout so
+// that docker logs shows them.
+var containerConfigText = setConfLines(exampleConfigText, map[string]string{
+	"health_enabled": "true",
+	"access_log":     tomlString(""),
+	"server_log":     tomlString(""),
+})
+
 // createConfigFile writes webdavgo.example.conf, every key with its
 // default and description, to path, and creates its directory if missing.
+// In a container it writes containerConfigText instead.
 func createConfigFile(path string) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0750); err != nil {
 		return fmt.Errorf("cannot create config directory %s: %w", dir, err)
 	}
-	if err := replaceFile(path, []byte(exampleConfigText), nil); err != nil {
+	text := exampleConfigText
+	if containerMode {
+		text = containerConfigText
+	}
+	if err := replaceFile(path, []byte(text), nil); err != nil {
 		return fmt.Errorf("cannot create config file %s: %w", path, err)
 	}
 	return nil
