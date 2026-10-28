@@ -137,7 +137,7 @@ services:
     ports:
       - "443:443"
       - "8443:8443"
-      # WebDAV over plain HTTP, only used before a certificate exists.
+      # WebDAV over plain HTTP while tls_mode is "off".
       # - "8080:8080"
     volumes:
       - webdavgo:/var/lib/webdavgo
@@ -149,11 +149,33 @@ volumes:
 
 The volume `/var/lib/webdavgo` holds everything: the config file
 (`/etc/webdavgo` is a symlink to it), the database, the users' files and
-the certificates. Port 8080 serves WebDAV without TLS until **Domain &
-certificate** has obtained one. After that WebDAV moves to 443. Publish 8080
-(`-p 8080:8080`) only if you need WebDAV before that. The stop timeout of
-35 seconds leaves room for `shutdown_timeout` (30 s by default). Docker's
-default of 10 seconds would cut running requests.
+the certificates. Port 8080 serves WebDAV over plain HTTP as long as
+`tls_mode` is `"off"`. Once **Domain & certificate** has obtained a
+certificate, WebDAV moves to 443. Publish 8080 (`-p 8080:8080`) if you need
+WebDAV before that. The stop timeout of 35 seconds leaves room for
+`shutdown_timeout` (30 s by default). Docker's default of 10 seconds would
+cut running requests.
+
+**Internal use without TLS.** Without a domain setup, `tls_mode` stays
+`"off"` and WebDAV is served on 8080 permanently:
+
+```yaml
+services:
+  webdavgo:
+    image: joernfeuerabend/webdavgo:0.1
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    volumes:
+      - webdavgo:/var/lib/webdavgo
+    stop_grace_period: 35s
+
+volumes:
+  webdavgo:
+```
+
+WebDAV credentials then travel in clear text, so this fits only a trusted
+network.
 
 **Port 443** must be published as `443:443`. The certificate request uses
 the TLS-ALPN-01 challenge, which the CA always sends to port 443, and
