@@ -170,7 +170,22 @@ func handleSetup(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		if !validSetupToken(tok) {
-			http.Error(w, "invalid or expired setup token", http.StatusForbidden)
+			if !isSetupActive() {
+				http.Error(w, "invalid or expired setup token", http.StatusForbidden)
+				return
+			}
+			// A container's setup URL names an address only the container
+			// knows, so the operator opens /setup at the host and types the
+			// token in. The form sends it back here as ?token=.
+			data := map[string]any{"Error": ""}
+			status := http.StatusOK
+			if r.URL.Query().Has("token") {
+				data["Error"] = "Invalid or expired setup token."
+				status = http.StatusForbidden
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(status)
+			renderPage(w, r, "setup-token", data)
 			return
 		}
 		renderSetup(w, r, "", "")
