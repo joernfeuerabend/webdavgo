@@ -81,7 +81,9 @@ It prints its plan first, then:
    does not set `access_log` or `server_log`, the plan says that their
    defaults apply, so the log files are written under `/var/log/webdavgo` all
    the same.
-5. writes `/etc/systemd/system/webdavgo.service`, a hardened unit: runs as
+5. writes `/etc/systemd/system/webdavgo.service`, a hardened unit with
+   `Type=notify` and `WatchdogSec=30s` (see
+   [Health checks](administration.md#health-checks)): runs as
    `webdavgo`, `NoNewPrivileges`, `ProtectSystem=strict` with
    `ReadWritePaths=/var/lib/webdavgo /etc/webdavgo`, `ProtectHome`, `PrivateTmp`,
    `PrivateDevices`, kernel/cgroup protection, `RestrictAddressFamilies`,
