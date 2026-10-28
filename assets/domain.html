@@ -1,0 +1,76 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Jörn Feuerabend -->
+{{define "domain"}}<!DOCTYPE html>
+<html lang="en">
+<head>{{template "head" .}}<title>webdavgo – Certificate request</title></head>
+<body hx-boost="true" hx-headers='{"X-CSRF-Token": "{{.CSRF}}"}'>
+<div class="layout">
+  {{template "nav" .}}
+  <main>
+    <h1>Certificate request</h1>
+    <p class="muted small">Started by Apply in <a href="/admin/settings#tls">Settings → TLS &amp; domain</a>. The admin UI
+       is {{.AdminReach}}.</p>
+    {{template "domain-progress" .}}
+  </main>
+</div>
+</body>
+</html>{{end}}
+
+{{define "domain-progress"}}
+<div id="domain-progress" class="card card-spaced"
+     {{if .Job.Running}}hx-get="/admin/domain/progress" hx-trigger="every 1s" hx-swap="outerHTML"{{end}}>
+  <h2>Progress for {{.Job.Domain}}</h2>
+  <ol class="job-steps">
+    {{range .Job.Steps}}<li class="step-{{.State}}"><span class="step-state">{{.State}}</span> {{.Text}}
+      {{if .Detail}}<details><summary>Details</summary><pre class="detail">{{.Detail}}</pre></details>{{end}}</li>
+    {{end}}
+  </ol>
+  {{if .Job.Running}}<p class="muted small">Working… this page updates by itself.</p>{{end}}
+  {{if .Job.Done}}{{if .Job.OK}}<p class="success">Done. <a href="/admin/domain/done" hx-boost="false">Continue</a></p>
+  {{else}}<p class="error">{{.Job.Error}}</p>
+  {{if .Job.ErrorDetail}}<details><summary>Details</summary><pre class="detail">{{.Job.ErrorDetail}}</pre></details>{{end}}
+  <p class="muted small">WebDAV keeps running on its previous listener. Nothing was saved to the config file;
+     <a href="/admin/settings#tls">Settings → TLS &amp; domain</a> shows the submitted values to correct and send
+     again.</p>{{end}}{{end}}
+</div>{{end}}
+
+{{define "finish"}}<!DOCTYPE html>
+<html lang="en">
+<head>{{template "head" .}}<title>webdavgo – Setup complete</title></head>
+<body hx-boost="true" hx-headers='{"X-CSRF-Token": "{{.CSRF}}"}'>
+<div class="layout">
+  {{template "nav" .}}
+  <main>
+    <h1>Setup complete</h1>
+    <div class="card">
+      <h2>Server URL</h2>
+      <p>WebDAV clients connect to <a class="server-url" href="{{.URL}}">{{.URL}}</a> with a webdavgo user account
+         (create users on the <a href="/admin/users">Users</a> page).</p>
+      <p>Scan this code with the iOS app to add the server:</p>
+      <img class="qr" src="{{.QR}}" alt="QR code of {{.URL}}" width="200" height="200">
+    </div>
+    <div class="card card-spaced">
+      <h2>Certificate</h2>
+      {{template "cert-status" .}}
+    </div>
+    <div class="card card-spaced">
+      <h2>Admin UI</h2>
+      <p>The admin UI is {{.AdminReach}}. Change it with webgui_port and webgui_listen_address on the
+         <a href="/admin/settings#network">Settings</a> page.</p>
+    </div>
+  </main>
+</div>
+</body>
+</html>{{end}}
+
+{{define "cert-status"}}
+{{if .LifetimeLow}}<p class="banner-warn">Certificate has less than a third of its lifetime left ({{.DaysLeft}} days) — renewal is overdue. Check the last error below and the server log.</p>{{end}}
+<table>
+  <tr><th>Mode</th><td>ACME (TLS-ALPN-01)</td></tr>
+  <tr><th>Domain</th><td>{{.Domain}}</td></tr>
+  <tr><th>Issuer</th><td>{{if .Issuer}}{{.Issuer}}{{else}}no certificate yet{{end}}</td></tr>
+  <tr><th>Not after</th><td>{{if .NotAfter}}{{.NotAfter}} ({{.DaysLeft}} days left){{else}}no certificate yet{{end}}</td></tr>
+  <tr><th>Next renewal</th><td>{{if .NextRenewal}}{{.NextRenewal}} {{if .RenewalByARI}}(ARI window {{.ARIStart}} – {{.ARIEnd}}){{else}}(estimated: a third of the lifetime left; the CA sent no ARI window){{end}}{{else}}—{{end}}</td></tr>
+  <tr><th>Last obtain/renew</th><td>{{if .LastSuccess}}{{.LastSuccess}}{{else}}none since start{{end}}</td></tr>
+  <tr><th>Last error</th><td>{{if .LastError}}<span class="error">{{.LastErrorAt}}: {{.LastError}}</span>{{else}}none{{end}}</td></tr>
+</table>{{end}}

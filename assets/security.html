@@ -1,0 +1,111 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Jörn Feuerabend -->
+{{define "security"}}<!DOCTYPE html>
+<html lang="en">
+<head>{{template "head" .}}<title>webdavgo – Security</title></head>
+<body hx-boost="true" hx-headers='{"X-CSRF-Token": "{{.CSRF}}"}'>
+<div class="layout">
+  {{template "nav" .}}
+  <main>
+    <h1>Security</h1>
+    <p class="muted">Brute-force protection state since the last restart (window {{.Window}}). WebDAV user auth (including /api/v1/), share tokens and the admin login (password, TOTP and recovery codes) share these tables: a lockout from one source blocks the client on all of them. Times are UTC.</p>
+
+    <div class="card">
+      <h2>Clients</h2>
+      <p class="muted small">Clients that are locked out or have been before; a repeat lockout lasts twice as long. Unlocking also resets that doubling. "Failures" counts the current window (it restarts with each lockout); "Source" counts all failures since the client was first recorded.</p>
+      {{if .Clients}}
+      <div class="table-scroll">
+      <table id="client-table">
+        <thead><tr><th>Client</th><th>Source</th><th>Locked until</th><th>Remaining</th><th>Failures</th><th>Lockouts</th><th>Last failure</th><th></th></tr></thead>
+        <tbody>
+        {{range .Clients}}
+        <tr>
+          <td><code>{{.Client}}</code></td>
+          <td>{{.Sources}}</td>
+          <td>{{if .Locked}}{{.LockedUntil}}{{else}}<span class="muted">not locked</span>{{end}}</td>
+          <td>{{if .Locked}}{{.Remaining}}{{else}}<span class="muted">–</span>{{end}}</td>
+          <td>{{.Failures}} <span class="muted small">({{.Total}} total)</span></td>
+          <td>{{.Lockouts}}</td>
+          <td>{{.LastSeen}}</td>
+          <td>
+            <form method="post" action="/admin/security/unlock-client">
+              {{template "csrf" $}}
+              <input type="hidden" name="client" value="{{.Client}}">
+              <button type="submit" class="btn btn-sm">Unlock</button>
+            </form>
+          </td>
+        </tr>
+        {{end}}
+        </tbody>
+      </table>
+      </div>
+      {{else}}
+      <p class="muted">No locked clients.</p>
+      {{end}}
+    </div>
+
+    <div class="card">
+      <h2>Throttled accounts</h2>
+      <p class="muted small">Accounts with many failures from any client get at most one password or code check per interval. The real user is slowed down, never locked out. "Remaining" is how long the throttle lasts if no further failures come.</p>
+      {{if .Accounts}}
+      <div class="table-scroll">
+      <table id="account-table">
+        <thead><tr><th>Username</th><th>Source</th><th>Remaining</th><th>Failures</th><th>Next check allowed</th><th>Last failure</th><th></th></tr></thead>
+        <tbody>
+        {{range .Accounts}}
+        <tr>
+          <td>{{.Username}}</td>
+          <td>{{.Sources}}</td>
+          <td>{{.Remaining}}</td>
+          <td>{{.Failures}} <span class="muted small">({{.Total}} total)</span></td>
+          <td>{{.NextCheck}}</td>
+          <td>{{.LastSeen}}</td>
+          <td>
+            <form method="post" action="/admin/security/clear-account">
+              {{template "csrf" $}}
+              <input type="hidden" name="username" value="{{.Username}}">
+              <button type="submit" class="btn btn-sm">Clear</button>
+            </form>
+          </td>
+        </tr>
+        {{end}}
+        </tbody>
+      </table>
+      </div>
+      {{else}}
+      <p class="muted">No throttled accounts.</p>
+      {{end}}
+    </div>
+
+    <div class="card">
+      <h2>Rate-limited clients</h2>
+      <p class="muted small">Clients held back by the per-IP connection limit ({{.PerIPLimit}} connections per listener) or the rate limit for WebDAV requests without credentials ({{.UnauthRate}}/s, burst {{.UnauthBurst}}). Both clear themselves within seconds, so there is no manual unlock. A client counts as active while it holds all its connections or has no token left, and for a minute after a refusal. Listed: active now or refused within the last 24 h.</p>
+      {{if .Limited}}
+      <div class="table-scroll">
+      <table id="limited-table">
+        <thead><tr><th>Client</th><th>Limit</th><th>Listener</th><th>Active</th><th>Remaining</th><th>Refused</th><th>First refusal</th><th>Last refusal</th></tr></thead>
+        <tbody>
+        {{range .Limited}}
+        <tr>
+          <td><code>{{.Client}}</code></td>
+          <td>{{.Kind}}</td>
+          <td>{{.Listener}}</td>
+          <td>{{if .Active}}yes{{else}}<span class="muted">no</span>{{end}}</td>
+          <td>{{if .Remaining}}{{.Remaining}}{{else}}<span class="muted">–</span>{{end}}</td>
+          <td>{{.Refused}}</td>
+          <td>{{.FirstRefusal}}</td>
+          <td>{{.LastRefusal}}</td>
+        </tr>
+        {{end}}
+        </tbody>
+      </table>
+      </div>
+      {{else}}
+      <p class="muted">No rate-limited clients.</p>
+      {{end}}
+      {{if .NotTracked}}<p class="muted small">+{{.NotTracked}} not tracked (table full)</p>{{end}}
+    </div>
+  </main>
+</div>
+</body>
+</html>{{end}}

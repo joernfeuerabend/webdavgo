@@ -1,0 +1,308 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Copyright (C) 2026 Jörn Feuerabend */
+
+/* webdavgo admin — minimal dark-mode-friendly stylesheet */
+:root {
+  --bg: #121212;
+  --surface: #1e1e1e;
+  --border: #333;
+  --text: #e0e0e0;
+  --muted: #999;
+  --accent: #4a9eff;
+  --danger: #e74c3c;
+  --success: #2ecc71;
+  --warn-bg: #2a2000;
+  --warn-border: #a07000;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ---- layout ---- */
+.layout { display: flex; min-height: 100vh; }
+nav {
+  width: 220px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 1.5rem 0;
+  flex-shrink: 0;
+}
+nav .brand {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+  padding: 0 1rem 1.5rem;
+  display: block;
+}
+/* The wordmark: "webdav" in the text colour, "go" in the accent colour. */
+.wordmark { font-weight: 700; color: var(--text); }
+.wordmark-go { color: var(--accent); }
+nav ul { list-style: none; }
+nav li a {
+  display: block;
+  padding: .5rem 1rem;
+  color: var(--text);
+  border-left: 3px solid transparent;
+}
+nav li a:hover { background: rgba(255,255,255,.05); text-decoration: none; }
+nav li a.active {
+  border-left-color: var(--accent);
+  color: var(--accent);
+  background: rgba(74,158,255,.08);
+}
+nav .nav-footer {
+  margin-top: auto;
+  padding: 1rem;
+  border-top: 1px solid var(--border);
+  font-size: .85rem;
+  color: var(--muted);
+}
+main { flex: 1; padding: 2rem; max-width: 900px; }
+h1 { font-size: 1.4rem; margin-bottom: 1.5rem; }
+h2 { font-size: 1.1rem; margin-bottom: 1rem; color: var(--muted); }
+
+/* ---- cards ---- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+/* ---- forms ---- */
+label { display: block; margin-bottom: 1rem; font-size: .9rem; }
+label small { display: block; color: var(--muted); margin-top: .25rem; font-size: .8rem; }
+input[type=text], input[type=password], input[type=email], input[type=number], select {
+  display: block;
+  width: 100%;
+  margin-top: .35rem;
+  padding: .5rem .75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: .95rem;
+}
+input:focus, select:focus { outline: 2px solid var(--accent); border-color: transparent; }
+input[disabled] { opacity: .5; cursor: not-allowed; }
+button, .btn {
+  display: inline-block;
+  padding: .45rem 1rem;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  font-size: .9rem;
+  font-weight: 500;
+}
+button[type=submit], .btn-primary {
+  background: var(--accent);
+  color: #000;
+}
+button[type=submit]:hover, .btn-primary:hover { opacity: .85; }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-danger:hover { opacity: .85; }
+.btn-sm { padding: .3rem .7rem; font-size: .82rem; }
+
+/* ---- messages ---- */
+.error { color: var(--danger); margin-bottom: 1rem; font-size: .9rem; }
+.success { color: var(--success); margin-bottom: 1rem; font-size: .9rem; }
+.banner {
+  padding: .75rem 1rem;
+  border-radius: 4px;
+  margin-bottom: 1.25rem;
+  font-size: .9rem;
+}
+.banner-warn {
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  color: #f0c040;
+}
+
+/* ---- tables ---- */
+table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+th, td { padding: .55rem .75rem; text-align: left; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; }
+tr:last-child td { border-bottom: none; }
+.role-badge {
+  display: inline-block;
+  padding: .15rem .5rem;
+  border-radius: 12px;
+  font-size: .75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.role-admin { background: rgba(74,158,255,.15); color: var(--accent); }
+.role-user  { background: rgba(255,255,255,.07); color: var(--muted); }
+
+/* ---- per-row action column ---- */
+.user-search { margin-bottom: 1rem; }
+.user-search input[type=search] {
+  width: 100%; padding: .5rem .75rem; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 4px; color: var(--text); font-size: .95rem;
+}
+.pager { display: flex; gap: 1rem; align-items: center; margin-top: 1rem; font-size: .9rem; color: var(--muted); }
+.row-actions { display: flex; flex-direction: column; gap: .4rem; align-items: flex-start; }
+
+/* ---- reset-password accordion ---- */
+details { margin-top: 0; }
+details summary { cursor: pointer; color: var(--accent); font-size: .85rem; }
+details > div { margin-top: .5rem; display: flex; gap: .5rem; align-items: center; }
+details input { width: auto; flex: 1; }
+
+/* ---- status grid ---- */
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1rem; }
+.stat { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; }
+.stat-val { font-size: 1.5rem; font-weight: 700; color: var(--accent); }
+.stat-label { font-size: .8rem; color: var(--muted); margin-top: .25rem; }
+.activity-tiles .stat-val { font-size: 1.25rem; overflow-wrap: anywhere; }
+.activity-tiles .stat-label { margin: 0 0 .35rem; }
+.stat-sub { font-size: .75rem; color: var(--muted); }
+.stat-day { font-size: .85rem; margin-top: .5rem; padding-top: .5rem; border-top: 1px solid var(--border); }
+
+/* ---- login / setup ---- */
+.setup-wrap, .login-wrap {
+  max-width: 440px;
+  margin: 6rem auto;
+  padding: 2rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.setup-wrap h1, .login-wrap h1 { margin-bottom: 1.25rem; }
+.setup-wrap form button, .login-wrap form button { margin-top: .5rem; width: 100%; }
+.setup-wrap .warranty, .login-wrap .warranty { margin-top: 1rem; text-align: center; font-size: .78rem; color: var(--muted); }
+
+/* ---- about ---- */
+.about p + p { margin-top: .75rem; }
+
+/* ---- helpers (the CSP forbids inline style attributes) ---- */
+.muted { color: var(--muted); }
+.small { font-size: .82rem; }
+.card-spaced { margin-top: 1.5rem; }
+.link-list { margin-left: 1.25rem; line-height: 2; }
+.logout-form { margin-top: .5rem; }
+.login-wrap .logout-form button { width: auto; margin-top: 1rem; }
+.btn { background: rgba(255,255,255,.1); color: var(--text); }
+.btn-primary, a.btn-primary { background: var(--accent); color: #000; }
+/* ---- settings ---- */
+.field { margin-bottom: 1.1rem; font-size: .9rem; }
+.field label { margin-bottom: 0; }
+.field small { display: block; color: var(--muted); margin-top: .25rem; font-size: .8rem; }
+.field code { word-break: break-all; }
+.field-check { display: flex; gap: .5rem; align-items: center; }
+.field small.field-key { display: inline; margin-top: 0; }
+.field-number { display: flex; gap: .5rem; align-items: center; }
+.field-number input { max-width: 14rem; }
+.field-number span { margin-top: .35rem; color: var(--muted); }
+.field-invalid input, .field-invalid select { border-color: var(--danger); }
+.field small.field-error { color: var(--danger); }
+.field small.field-restart, .field small.field-pending { color: #e0a030; }
+.field small.field-note { color: var(--text); }
+.form-actions { display: flex; gap: .5rem; margin-top: .5rem; }
+.reset-form { margin-top: .75rem; }
+.pending-list { margin: .5rem 0 0 1.25rem; }
+
+/* ---- TOTP enrolment ---- */
+.enrol-wrap { max-width: 520px; }
+.steps { margin: 0 0 1.25rem 1.25rem; }
+.steps li { margin-bottom: .75rem; }
+.qr { display: block; margin: .75rem 0; background: #fff; padding: 8px; border-radius: 4px; image-rendering: pixelated; }
+.secret { display: block; margin-top: .35rem; font-size: 1.05rem; letter-spacing: .05em; }
+.uri { display: block; word-break: break-all; font-size: .78rem; color: var(--muted); }
+.recovery-codes { list-style: none; columns: 2; margin: 1rem 0 1.5rem; font-size: 1.05rem; }
+.recovery-codes li { padding: .2rem 0; }
+
+/* ---- failed htmx requests (errors.js) ---- */
+.htmx-error {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  margin: 0;
+  padding: .6rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+}
+
+/* certificate request progress */
+.job-steps { margin: 0 0 1rem 1.25rem; }
+.job-steps li { margin-bottom: .5rem; }
+.step-state { display: inline-block; min-width: 4.5rem; font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; }
+.step-ok .step-state { color: var(--success); }
+.step-warn .step-state { color: #e0a030; }
+.step-fail .step-state { color: var(--danger); }
+.step-running .step-state { color: var(--muted); }
+pre.detail { white-space: pre-wrap; word-break: break-all; font-size: .78rem; color: var(--muted); margin-top: .35rem; }
+.server-url { font-size: 1.05rem; font-weight: 600; }
+
+/* Connections (Status) and Live Log */
+main.wide { max-width: none; }
+.table-scroll { overflow-x: auto; }
+#conn-table td, .log-table td { vertical-align: top; }
+#conn-table code, .log-table code { word-break: break-all; font-size: .8rem; }
+.nowrap { white-space: nowrap; }
+.log-filter { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; }
+.log-filter label { margin-bottom: 0; }
+.log-filter label.checkbox { display: flex; gap: .4rem; align-items: center; padding-bottom: .5rem; }
+.lvl-warn td:nth-child(2) { color: #e0a030; }
+.lvl-error td:nth-child(2) { color: var(--danger); }
+.lvl-debug td:nth-child(2) { color: var(--muted); }
+
+/* Activity (Status) */
+/* min(): below 320px of card width the single column shrinks with the card
+   instead of pushing the grid out of it; two panels sit side by side only
+   where both get 320px. min-width: 0 keeps a panel from widening its
+   track. Cells wrap at word boundaries so a table always fits its panel:
+   unwrappable values made it wider than the track, and the overflow was
+   cut off. */
+.activity-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 1.5rem; }
+.activity-grid > * { min-width: 0; }
+/* The restart note on the day column is secondary to the header itself. */
+.th-note { display: block; margin-top: .15rem; font-size: .72rem; font-weight: 400; text-transform: none; letter-spacing: 0; }
+/* Top failed IPs and usernames: one source per line. A long IPv6 address
+   or username has no break point of its own and would take the Sources
+   column's room; it may break anywhere instead, as in the Connections
+   table. */
+.top-failed .sources span { display: block; }
+.top-failed td:first-child code { overflow-wrap: anywhere; }
+.activity-group th { padding-top: 1rem; color: var(--text); text-transform: none; letter-spacing: 0; }
+#activity h3 { font-size: .95rem; color: var(--muted); margin: 1.5rem 0 .75rem; }
+.chart { display: flex; gap: 2px; height: 96px; }
+.chart-col { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.chart-bar { flex: 1; display: flex; flex-direction: column-reverse; background: rgba(255,255,255,.03); }
+.chart-label { height: 1.1rem; font-size: .7rem; color: var(--muted); white-space: nowrap; overflow: visible; }
+.chart-legend { list-style: none; display: flex; flex-wrap: wrap; gap: 1rem; margin-top: .5rem; color: var(--muted); }
+.swatch { display: inline-block; width: .7rem; height: .7rem; margin-right: .35rem; border-radius: 2px; vertical-align: middle; }
+.src-0 { background: var(--accent); }
+.src-1 { background: #2bb3a3; }
+.src-2 { background: #e0a030; }
+.src-3 { background: var(--danger); }
+.seg.h1 { height: 5%; }
+.seg.h2 { height: 10%; }
+.seg.h3 { height: 15%; }
+.seg.h4 { height: 20%; }
+.seg.h5 { height: 25%; }
+.seg.h6 { height: 30%; }
+.seg.h7 { height: 35%; }
+.seg.h8 { height: 40%; }
+.seg.h9 { height: 45%; }
+.seg.h10 { height: 50%; }
+.seg.h11 { height: 55%; }
+.seg.h12 { height: 60%; }
+.seg.h13 { height: 65%; }
+.seg.h14 { height: 70%; }
+.seg.h15 { height: 75%; }
+.seg.h16 { height: 80%; }
+.seg.h17 { height: 85%; }
+.seg.h18 { height: 90%; }
+.seg.h19 { height: 95%; }
+.seg.h20 { height: 100%; }

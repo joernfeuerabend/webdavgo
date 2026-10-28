@@ -1,0 +1,13 @@
+# build output
+/webdavgo
+/dist/
+
+# live data (DB with password hashes and share tokens)
+/data/
+
+# OS / editor
+.DS_Store
+.vscode/
+
+# Delve build artifacts
+__debug_bin*

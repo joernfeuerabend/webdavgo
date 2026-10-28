@@ -1,0 +1,113 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Jörn Feuerabend -->
+{{define "activity"}}
+{{/* Polls only while this element is on screen: leaving the page removes it. */}}
+{{with .Activity}}
+<div id="activity" class="card card-spaced" hx-get="/admin/status/activity" hx-trigger="every 30s" hx-swap="outerHTML">
+  <h2>Activity</h2>
+  <p class="muted small">Counted in memory since the process started; a restart resets everything. Updated every 30 s, last at {{.UpdatedAt}}. Bytes are counted on the wire (TLS included).</p>
+
+  <div class="activity-grid">
+    <div>
+    <table class="activity-table">
+      <thead><tr><th>Traffic</th><th>Last hour</th><th>{{template "day-header" .DayHeader}}</th></tr></thead>
+      <tbody>
+      {{range .Traffic}}
+      {{if .Group}}<tr class="activity-group"><th colspan="3">{{.Group}}</th></tr>{{end}}
+      <tr><td>{{.Label}}</td>{{if .Now}}<td colspan="2">{{.Hour}} <span class="muted small">now</span></td>{{else}}<td>{{.Hour}}</td><td>{{.Day}}</td>{{end}}</tr>
+      {{end}}
+      </tbody>
+    </table>
+    </div>
+    <div>
+    <table class="activity-table">
+      <thead><tr><th>Authentication</th><th>Last hour</th><th>{{template "day-header" .DayHeader}}</th></tr></thead>
+      <tbody>
+      {{range .Auth}}
+      {{if .Group}}<tr class="activity-group"><th colspan="3">{{.Group}}</th></tr>{{end}}
+      <tr><td>{{.Label}}</td><td>{{.Hour}}</td><td>{{.Day}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <div class="activity-grid">
+    <div>
+    <table class="activity-table">
+      <thead><tr><th>Automatic limits</th><th>Last hour</th><th>{{template "day-header" .DayHeader}}</th></tr></thead>
+      <tbody>
+      {{range .Limits}}
+      {{if .Group}}<tr class="activity-group"><th colspan="3">{{.Group}}</th></tr>{{end}}
+      <tr><td>{{.Label}}</td>{{if .Now}}<td colspan="2">{{.Hour}} <span class="muted small">now</span></td>{{else}}<td>{{.Hour}}</td><td>{{.Day}}</td>{{end}}</tr>
+      {{end}}
+      </tbody>
+    </table>
+    <p class="muted small">"Limited" counts clients (accounts for throttles) that a limit started on or refused. Details per client: Admin → Security.</p>
+    </div>
+    <div>
+      <h3>Top client IPs by unauthenticated 401s <span class="muted small">{{.DayHeader}}</span></h3>
+      {{if .TopUnauth}}
+      <table class="activity-table">
+        <thead><tr><th>Client</th><th>401 without credentials</th></tr></thead>
+        <tbody>
+        {{range .TopUnauth}}<tr><td><code>{{.Key}}</code></td><td>{{.Count}}</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+      {{else}}<p class="muted small">None.</p>{{end}}
+      {{if .UnauthOverflow}}<p class="muted small">+{{.UnauthOverflow}} not tracked (hourly table full)</p>{{end}}
+    </div>
+  </div>
+
+  <h3>Failed attempts per hour <span class="muted small">UTC · {{.DayHeader}} · hover a bar for the numbers</span></h3>
+  {{if .ChartEmpty}}<p class="muted small">No failed attempts.</p>{{end}}
+  <div class="chart">
+    {{range .Chart}}
+    <div class="chart-col" title="{{.Title}}">
+      <div class="chart-bar">{{range .Segments}}<div class="seg {{.Class}}"></div>{{end}}</div>
+      <div class="chart-label">{{.Label}}</div>
+    </div>
+    {{end}}
+  </div>
+  <ul class="chart-legend small">
+    {{range $i, $s := .Sources}}<li><span class="swatch src-{{$i}}"></span>{{$s}}</li>{{end}}
+  </ul>
+
+  <div class="activity-grid">
+    <div>
+      <h3>Top client IPs by failed attempts <span class="muted small">{{.DayHeader}}</span></h3>
+      {{if .TopIPs}}
+      <table class="activity-table top-failed">
+        <thead><tr><th>Client</th><th>Failed</th><th>Sources</th></tr></thead>
+        <tbody>
+        {{range .TopIPs}}<tr><td><code>{{.Key}}</code></td><td>{{.Count}}</td><td class="small sources">{{range .Sources}}<span>{{.}}</span>{{end}}</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+      {{else}}<p class="muted small">None.</p>{{end}}
+      {{if .IPOverflow}}<p class="muted small">+{{.IPOverflow}} not tracked (hourly table full)</p>{{end}}
+    </div>
+    <div>
+      <h3>Top attempted usernames <span class="muted small">{{.DayHeader}}</span></h3>
+      {{if .TopUsers}}
+      <table class="activity-table top-failed">
+        <thead><tr><th>Username</th><th>Failed</th><th>Account</th><th>Sources</th></tr></thead>
+        <tbody>
+        {{range .TopUsers}}<tr><td><code>{{.Key}}</code></td><td>{{.Count}}</td><td>{{if .Known}}exists{{else}}<span class="muted">unknown</span>{{end}}</td><td class="small sources">{{range .Sources}}<span>{{.}}</span>{{end}}</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+      {{else}}<p class="muted small">None.</p>{{end}}
+      {{if .UserOverflow}}<p class="muted small">+{{.UserOverflow}} not tracked (hourly table full)</p>{{end}}
+    </div>
+  </div>
+</div>
+{{end}}
+{{end}}
+
+{{/* A column header for DayHeader: "last 24 h", optionally followed by
+     " (restarted … ago)". The note goes on its own line as a secondary
+     label; the split relies on the fixed 9-byte "last 24 h" prefix that
+     statsCollector.periods writes. */}}
+{{define "day-header"}}{{if gt (len .) 9}}{{slice . 0 9}}<span class="th-note">{{slice . 10}}</span>{{else}}{{.}}{{end}}{{end}}

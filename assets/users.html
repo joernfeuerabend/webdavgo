@@ -1,0 +1,136 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Jörn Feuerabend -->
+{{define "users"}}<!DOCTYPE html>
+<html lang="en">
+<head>{{template "head" .}}<title>webdavgo – Users</title></head>
+<body hx-boost="true" hx-headers='{"X-CSRF-Token": "{{.CSRF}}"}'>
+<div class="layout">
+  {{template "nav" .}}
+  <main>
+    <h1>Users</h1>
+
+    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+
+    <div class="card">
+      <h2>All users</h2>
+      {{/* Outside #user-list, so the field keeps focus and caret while the
+           list under it is swapped on every keystroke. */}}
+      <form method="get" action="/admin/users" class="user-search" role="search">
+        <input type="search" name="q" value="{{.Q}}" placeholder="Search username" aria-label="Search username"
+               autocapitalize="off" spellcheck="false"
+               hx-get="/admin/users" hx-trigger="input changed delay:300ms, search"
+               hx-target="#user-list" hx-select="#user-list" hx-swap="outerHTML" hx-replace-url="true">
+      </form>
+      <div id="user-list">
+      <table id="user-table">
+        <thead><tr><th>Username</th><th>Role</th><th>TOTP</th><th>Storage</th><th>Actions</th></tr></thead>
+        <tbody>
+        {{range .Users}}
+        <tr>
+          <td>{{.Username}}</td>
+          <td><span class="role-badge role-{{.Role}}">{{.Role}}</span></td>
+          <td>{{if eq .Role "admin"}}{{if .TOTP}}enrolled{{else}}<span class="muted">pending enrolment</span>{{end}}{{else}}<span class="muted">—</span>{{end}}</td>
+          <td>{{.UsageLabel}}</td>
+          <td>
+            <div class="row-actions">
+              <details>
+                <summary>Set quota</summary>
+                <div>
+                  <form method="post" action="/admin/users/{{.Username}}/quota{{$.Return}}" hx-boost="false">
+                    {{template "csrf" $}}
+                    <input type="text" name="quota_gb" value="{{.QuotaGB}}" required inputmode="decimal"
+                           pattern="[0-9]+([.,][0-9]*)?|[.,][0-9]+" title="GB (1 GB = 1,000,000,000 bytes), 0 = unlimited">
+                    <button type="submit" class="btn-sm">Save</button>
+                  </form>
+                </div>
+              </details>
+              <details>
+                <summary>Set new password</summary>
+                <div>
+                  <form method="post" action="/admin/users/{{.Username}}/reset{{$.Return}}"{{if eq .Username $.Username}} hx-boost="false"{{end}}>
+                    {{template "csrf" $}}
+                    <input type="password" name="new_password" placeholder="New password" required minlength="8">
+                    <button type="submit" class="btn-sm">Save</button>
+                  </form>
+                </div>
+              </details>
+              {{if and (eq .Role "admin") .TOTP}}
+              {{if eq .Username $.Username}}
+              <details>
+                <summary>Reset my TOTP</summary>
+                <div>
+                  <form method="post" action="/admin/users/{{.Username}}/totp-reset{{$.Return}}" hx-boost="false">
+                    {{template "csrf" $}}
+                    <input type="text" name="code" placeholder="Current 6-digit code" required
+                           inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}">
+                    <button type="submit" class="btn-sm">Reset</button>
+                  </form>
+                </div>
+              </details>
+              {{else}}
+              <form method="post" action="/admin/users/{{.Username}}/totp-reset{{$.Return}}">
+                {{template "csrf" $}}
+                <button type="submit" class="btn btn-sm"
+                        hx-post="/admin/users/{{.Username}}/totp-reset{{$.Return}}"
+                        hx-confirm="Reset TOTP of {{.Username}}? They must enrol again at their next login, and their sessions end now."
+                        hx-target="body"
+                        hx-push-url="/admin/users{{$.Return}}">Reset TOTP</button>
+              </form>
+              {{end}}
+              {{end}}
+              {{if ne .Username $.Username}}
+              <form method="post" action="/admin/users/{{.Username}}/delete{{$.Return}}">
+                {{template "csrf" $}}
+                <button type="submit" class="btn btn-danger btn-sm"
+                        hx-post="/admin/users/{{.Username}}/delete{{$.Return}}"
+                        hx-confirm="Delete user {{.Username}}? This cannot be undone."
+                        hx-target="body"
+                        hx-push-url="/admin/users{{$.Return}}">Delete</button>
+              </form>
+              {{end}}
+            </div>
+          </td>
+        </tr>
+        {{else}}
+        <tr><td colspan="5" class="muted">{{if .Q}}No user matches “{{.Q}}”.{{else}}No users yet.{{end}}</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+      <p class="pager">
+        {{if gt .PageNo 1}}<a href="{{.PrevURL}}">« Previous</a>{{end}}
+        <span>Page {{.PageNo}} of {{.Pages}} · {{.Matching}} {{if eq .Matching 1}}user{{else}}users{{end}}{{if .Q}} matching “{{.Q}}”{{end}}</span>
+        {{if lt .PageNo .Pages}}<a href="{{.NextURL}}">Next »</a>{{end}}
+      </p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Add user</h2>
+      <form method="post" action="/admin/users">
+        {{template "csrf" .}}
+        <label>Username
+          <input type="text" name="username" required pattern="[a-z0-9_-]{3,32}"
+                 title="3–32 chars: lowercase letters, digits, - or _">
+        </label>
+        <label>Password
+          <input type="password" name="password" required minlength="8">
+        </label>
+        <label>Role
+          <select name="role">
+            <option value="user">user</option>
+            <option value="admin">admin</option>
+          </select>
+          <small>Admins must set up TOTP at their first login.</small>
+        </label>
+        <label>Quota (GB)
+          <input type="text" name="quota_gb" value="{{.DefaultQuotaGB}}" required inputmode="decimal"
+                 pattern="[0-9]+([.,][0-9]*)?|[.,][0-9]+" title="GB (1 GB = 1,000,000,000 bytes), 0 = unlimited">
+          <small>1 GB = 1,000,000,000 bytes; 0 = unlimited.</small>
+        </label>
+        <button type="submit">Add user</button>
+      </form>
+    </div>
+  </main>
+</div>
+</body>
+</html>{{end}}

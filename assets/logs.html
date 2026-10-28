@@ -1,0 +1,60 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Jörn Feuerabend -->
+{{define "logs"}}<!DOCTYPE html>
+<html lang="en">
+<head>{{template "head" .}}<title>webdavgo – Live Log</title></head>
+<body hx-boost="true" hx-headers='{"X-CSRF-Token": "{{.CSRF}}"}'>
+<div class="layout">
+  {{template "nav" .}}
+  <main class="wide">
+    <h1>Live Log</h1>
+    <p class="muted">The newest {{.Capacity}} log records of this process, kept in memory (log_buffer_entries). The complete
+       logs: request lines go to <code>{{.AccessLog}}</code> (access_log), every other record to
+       <code>{{.ServerLog}}</code> (server_log). Times are UTC.</p>
+    <div class="card">
+      <form method="get" action="/admin/logs" class="log-filter">
+        <label>Minimum level
+          <select name="level">
+            <option value="debug" {{if eq .Level "debug"}}selected{{end}}>debug</option>
+            <option value="info" {{if eq .Level "info"}}selected{{end}}>info</option>
+            <option value="warn" {{if eq .Level "warn"}}selected{{end}}>warn</option>
+            <option value="error" {{if eq .Level "error"}}selected{{end}}>error</option>
+          </select>
+        </label>
+        <label>Text
+          <input type="text" name="q" value="{{.Q}}" placeholder="e.g. login failed" autocapitalize="off" spellcheck="false">
+        </label>
+        <label class="checkbox"><input type="checkbox" name="auto" value="1" {{if .Auto}}checked{{end}}> Auto-refresh (2 s)</label>
+        <button type="submit">Apply</button>
+      </form>
+    </div>
+    {{template "log-entries" .}}
+  </main>
+</div>
+</body>
+</html>{{end}}
+
+{{define "log-entries"}}
+<div id="log-entries" class="card" {{if .Auto}}hx-get="/admin/logs/entries?{{.Filter}}" hx-trigger="every 2s" hx-swap="outerHTML"{{end}}>
+  <p class="muted small">Showing the newest {{len .Entries}} of {{.Matching}} matching records ({{.Total}} in the buffer, capacity {{.Capacity}}).</p>
+  {{if .Entries}}
+  <div class="table-scroll">
+  <table class="log-table">
+    <thead><tr><th>Time</th><th>Level</th><th>Message</th><th>Attributes</th></tr></thead>
+    <tbody>
+    {{range .Entries}}
+    <tr class="{{.Class}}">
+      <td class="nowrap">{{.Time}}</td>
+      <td>{{.Level}}</td>
+      <td>{{.Msg}}</td>
+      <td><code>{{.Attrs}}</code></td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{else}}
+  <p class="muted">No matching records.</p>
+  {{end}}
+</div>
+{{end}}

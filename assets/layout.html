@@ -1,0 +1,40 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Jörn Feuerabend -->
+{{define "head"}}
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{{/* The CSP forbids inline styles and eval; htmx must not try either. */}}
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false}'>
+<link rel="stylesheet" href="/admin/static/style.css">
+<script src="/admin/static/htmx.min.js"></script>
+<script src="/admin/static/errors.js"></script>
+<script src="/admin/static/settings.js"></script>
+{{end}}
+
+{{define "csrf"}}<input type="hidden" name="csrf_token" value="{{.CSRF}}">{{end}}
+
+{{define "nav"}}
+<nav>
+  <a class="brand" href="/admin/"><span class="wordmark">webdav<span class="wordmark-go">go</span></span></a>
+  <ul>
+    <li><a href="/admin/"       {{if eq .Page "dashboard"}}class="active"{{end}}>Dashboard</a></li>
+    <li><a href="/admin/users"  {{if eq .Page "users"}}class="active"{{end}}>Users</a></li>
+    <li><a href="/admin/shares" {{if eq .Page "shares"}}class="active"{{end}}>Shares</a></li>
+    <li><a href="/admin/security" {{if eq .Page "security"}}class="active"{{end}}>Security</a></li>
+    <li><a href="/admin/status" {{if eq .Page "status"}}class="active"{{end}}>Status</a></li>
+    <li><a href="/admin/logs"   {{if eq .Page "logs"}}class="active"{{end}}>Live Log</a></li>
+    <li><a href="/admin/settings" {{if eq .Page "settings"}}class="active"{{end}}>Settings</a></li>
+    <li><a href="/admin/about"  {{if eq .Page "about"}}class="active"{{end}}>About</a></li>
+  </ul>
+  <div class="nav-footer">
+    {{.Username}}<br>
+    {{/* Forms that change the session are never boosted: a boosted swap keeps
+         the old <body> attributes, including the CSRF header of the session
+         that just ended. A full page load renders a fresh token. */}}
+    <form method="post" action="/admin/logout" class="logout-form" hx-boost="false">
+      {{template "csrf" .}}
+      <button type="submit" class="btn btn-sm">Sign out</button>
+    </form>
+  </div>
+</nav>
+{{end}}

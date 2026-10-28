@@ -1,0 +1,53 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Jörn Feuerabend -->
+{{define "shares"}}<!DOCTYPE html>
+<html lang="en">
+<head>{{template "head" .}}<title>webdavgo – Shares</title></head>
+<body hx-boost="true" hx-headers='{"X-CSRF-Token": "{{.CSRF}}"}'>
+<div class="layout">
+  {{template "nav" .}}
+  <main>
+    <h1>Shares</h1>
+    <div class="card">
+      {{if .Shares}}
+      <table>
+        <thead>
+          <tr>
+            <th>Owner</th>
+            <th>Path</th>
+            <th>Recipient</th>
+            <th>Permission</th>
+            <th>Created</th>
+            <th>Last used</th>
+            <th>Expires</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+        {{range .Shares}}
+        <tr>
+          <td>{{.OwnerUsername}}</td>
+          <td><code>{{.Path}}</code></td>
+          <td>{{.RecipientEmail}}</td>
+          <td>{{.Permission}}</td>
+          <td>{{.CreatedAt}}</td>
+          <td>{{if .LastUsedAt}}{{.LastUsedAt}}{{else}}<span class="muted">—</span>{{end}}</td>
+          <td>{{if .ExpiresAt}}{{.ExpiresAt}}{{else}}<span class="muted">—</span>{{end}}</td>
+          <td>
+            <form method="post" action="/admin/shares/{{.ID}}/revoke">
+              {{template "csrf" $}}
+              <button type="submit" class="btn btn-danger btn-sm">Revoke</button>
+            </form>
+          </td>
+        </tr>
+        {{end}}
+        </tbody>
+      </table>
+      {{else}}
+      <p class="muted">No shares yet. Create one via the REST API.</p>
+      {{end}}
+    </div>
+  </main>
+</div>
+</body>
+</html>{{end}}

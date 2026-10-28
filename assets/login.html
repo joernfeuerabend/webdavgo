@@ -1,0 +1,22 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Jörn Feuerabend -->
+{{define "login"}}<!DOCTYPE html>
+<html lang="en">
+<head>{{template "head" .}}<title>webdavgo – Login</title></head>
+<body>
+<div class="login-wrap">
+  <h1><span class="wordmark">webdav<span class="wordmark-go">go</span></span> Admin</h1>
+  {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+  <form method="post" action="/admin/login" hx-boost="false">
+    <label>Username
+      <input type="text" name="username" autofocus required>
+    </label>
+    <label>Password
+      <input type="password" name="password" required>
+    </label>
+    <button type="submit">Sign in</button>
+  </form>
+  <p class="warranty">This program comes with ABSOLUTELY NO WARRANTY.</p>
+</div>
+</body>
+</html>{{end}}

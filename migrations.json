@@ -1,0 +1,43 @@
+{
+  "target_version": 4,
+  "migrations": [
+    {
+      "version": 1,
+      "description": "initial schema",
+      "statements": [
+        "CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('admin','user')), created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS shares (id TEXT PRIMARY KEY, owner_username TEXT NOT NULL, path TEXT NOT NULL, recipient_email TEXT NOT NULL, permission TEXT NOT NULL CHECK(permission IN ('read','read-write')), token_hash TEXT NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, last_used_at DATETIME, expires_at DATETIME, FOREIGN KEY (owner_username) REFERENCES users(username) ON DELETE CASCADE)",
+        "CREATE INDEX IF NOT EXISTS idx_shares_token ON shares(token_hash)",
+        "CREATE INDEX IF NOT EXISTS idx_shares_owner ON shares(owner_username)",
+        "CREATE INDEX IF NOT EXISTS idx_shares_recipient ON shares(recipient_email)"
+      ]
+    },
+    {
+      "version": 2,
+      "description": "drop legacy tombstones and tokens tables",
+      "statements": [
+        "DROP TABLE IF EXISTS tombstones",
+        "DROP INDEX IF EXISTS idx_tombstones_deleted_at",
+        "DROP TABLE IF EXISTS tokens",
+        "DROP INDEX IF EXISTS idx_tokens_lookup"
+      ]
+    },
+    {
+      "version": 3,
+      "description": "totp secrets and recovery codes for admins",
+      "statements": [
+        "CREATE TABLE IF NOT EXISTS totp (username TEXT PRIMARY KEY, secret TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, last_step INTEGER NOT NULL DEFAULT 0, FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE)",
+        "CREATE TABLE IF NOT EXISTS recovery_codes (username TEXT NOT NULL, code_hash TEXT NOT NULL, used_at DATETIME, PRIMARY KEY (username, code_hash), FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE)"
+      ]
+    },
+    {
+      "version": 4,
+      "description": "per-user storage quota (bytes, 0 = unlimited) and used bytes; existing users get 1 GB",
+      "statements": [
+        "CREATE TABLE IF NOT EXISTS user_quota (username TEXT PRIMARY KEY, quota_bytes INTEGER NOT NULL DEFAULT 1000000000 CHECK(quota_bytes >= 0), used_bytes INTEGER NOT NULL DEFAULT 0, FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE)",
+        "INSERT OR IGNORE INTO user_quota (username) SELECT username FROM users"
+      ]
+    }
+  ]
+}

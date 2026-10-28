@@ -1,0 +1,96 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Jörn Feuerabend -->
+{{define "settings"}}<!DOCTYPE html>
+<html lang="en">
+<head>{{template "head" .}}<title>webdavgo – Settings</title></head>
+<body hx-boost="true" hx-headers='{"X-CSRF-Token": "{{.CSRF}}"}'>
+<div class="layout">
+  {{template "nav" .}}
+  <main>
+    <h1>Settings</h1>
+
+    <div class="banner">
+      <strong>Save</strong> writes a section's changed values to the config file; nothing takes effect yet.
+      <strong>Apply</strong> saves the section's form and makes its saved values effective now, where the running
+      server can take them; the rest waits for a service restart.
+      <strong>Reset to defaults</strong> writes the section's default values to the file.
+    </div>
+
+    {{if .LoadError}}<p class="error">The config file cannot be read: {{.LoadError}}. The fields show the running values.</p>{{end}}
+    {{if .RestartPending}}<div class="banner banner-warn">
+      Saved values waiting for a service restart:
+      <ul class="pending-list">{{range .RestartPending}}<li><code>{{.}}</code></li>{{end}}</ul>
+    </div>{{end}}
+
+    <div class="field">
+      <label for="in-config-file">Config file <small class="field-key">(-config)</small></label>
+      <input type="text" id="in-config-file" value="{{.ConfigPath}}" readonly disabled>
+      <small class="field-readonly">Read-only: set by the service unit or -config.</small>
+    </div>
+
+    {{range .Sections}}
+    <div class="card card-spaced settings-section" id="{{.ID}}">
+      <h2>{{.Title}}</h2>
+      {{if .Intro}}<p class="muted small">{{.Intro}}</p>{{end}}
+      {{if .Notice}}<p class="success">{{.Notice}}</p>{{end}}
+      {{if .Links}}<ul class="link-list">{{range .Links}}<li><a href="{{.}}" hx-boost="false">{{.}}</a></li>{{end}}</ul>{{end}}
+      {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+      {{if eq .ID "tls"}}{{template "tls-status" $}}{{end}}
+      <form method="post" action="/admin/settings/{{.ID}}" hx-push-url="/admin/settings"
+            hx-swap="innerHTML show:#{{.ID}}:top">
+        {{template "csrf" $}}
+        {{range .Fields}}{{template "setting-field" .}}{{end}}
+        <div class="form-actions">
+          <button type="submit" name="action" value="save">Save</button>
+          <button type="submit" name="action" value="apply" class="btn">Apply</button>
+        </div>
+      </form>
+      <form method="post" action="/admin/settings/{{.ID}}/reset" class="reset-form">
+        {{template "csrf" $}}
+        <button type="submit" class="btn btn-sm"
+                hx-post="/admin/settings/{{.ID}}/reset"
+                hx-confirm="Write the default value of every {{.Title}} setting to {{$.ConfigPath}}? Nothing takes effect until Apply or a service restart."
+                hx-target="body"
+                hx-push-url="/admin/settings">Reset to defaults</button>
+      </form>
+    </div>
+    {{end}}
+  </main>
+</div>
+</body>
+</html>{{end}}
+
+{{define "setting-field"}}
+<div class="field{{if .Error}} field-invalid{{end}}">
+  {{if .Bool}}
+  <label class="field-check"><input type="checkbox" name="{{.Key}}" {{if .Checked}}checked{{end}} {{if .ReadOnly}}disabled{{end}}> {{.Label}} <small class="field-key">({{.Key}})</small></label>
+  {{else}}
+  <label for="in-{{.Key}}">{{.Label}} <small class="field-key">({{.Key}})</small></label>
+  {{if .ReadOnly}}<input type="text" id="in-{{.Key}}" value="{{.Value}}" readonly disabled>
+  {{else if .Number}}<div class="field-number"><input type="number" step="1" id="in-{{.Key}}" name="{{.Key}}" value="{{.Value}}">{{if .Unit}}<span>{{.Unit}}</span>{{end}}</div>
+  {{else if .Options}}<select id="in-{{.Key}}" name="{{.Key}}">{{range .Options}}<option value="{{.}}" {{if eq . $.Value}}selected{{end}}>{{.}}</option>{{end}}</select>
+  {{else}}<input type="text" id="in-{{.Key}}" name="{{.Key}}" value="{{.Value}}" spellcheck="false" autocapitalize="off"{{if .ACME}} data-acme{{end}}{{if .Disabled}} disabled{{end}}>{{end}}
+  {{end}}
+  {{range .ReadOnly}}<small class="field-readonly">Read-only: {{.}}.</small>{{end}}
+  {{if .Error}}<small class="field-error">{{.Error}}</small>{{end}}
+  {{if .Restart}}<small class="field-restart">Takes effect after service restart.</small>{{end}}
+  {{if .Note}}<small class="field-note">{{.Note}}</small>{{end}}
+  {{if .ACME}}<small>Used only with tls_mode acme, and saved only once a certificate for it has been obtained.</small>{{end}}
+  {{if .Pending}}<small class="field-pending">{{.Pending}}</small>{{end}}
+  <small>{{.Desc}} Default: <code>{{.Default}}</code>{{if .Unit}} {{.Unit}}{{end}}.</small>
+</div>
+{{end}}
+
+{{define "tls-status"}}
+{{if .TLSActive}}{{template "cert-status" .Cert}}
+<p class="small"><a href="/admin/domain/done">Server URL and QR code for the iOS app</a></p>
+{{else}}<p class="banner-warn">TLS is off: WebDAV credentials travel in clear text. Use only for development or on a
+  trusted LAN. To serve WebDAV over HTTPS, set tls_mode to acme and the domain below, then Apply.</p>{{end}}
+{{if .Job.Running}}<p class="banner">A certificate request for {{.Job.Domain}} is running: <a href="/admin/domain">show progress</a>.</p>{{end}}
+<p class="muted small">With tls_mode acme, Save and Apply both run the certificate request with the submitted values:
+  DNS and port 443 checks, a trial order, the real order, then WebDAV moves to HTTPS on port 443 without a restart.
+  The TLS values are written to the config file only once the certificate has been obtained; if the request fails,
+  nothing is saved. Before that, create an A record (and AAAA for IPv6) for the domain and forward external TCP port
+  443 to this machine. The admin UI needs no forwarding; it is {{.AdminReach}}. tls_mode off is saved at once and
+  takes effect after a service restart.</p>
+{{end}}

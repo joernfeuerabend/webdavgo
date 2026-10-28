@@ -1,0 +1,58 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Jörn Feuerabend -->
+{{define "dashboard"}}<!DOCTYPE html>
+<html lang="en">
+<head>{{template "head" .}}<title>webdavgo – Dashboard</title></head>
+<body hx-boost="true" hx-headers='{"X-CSRF-Token": "{{.CSRF}}"}'>
+<div class="layout">
+  {{template "nav" .}}
+  <main>
+    <h1>Dashboard</h1>
+    <div class="card">
+      <h2>Storage</h2>
+      <div class="stat-grid">
+        <div class="stat">
+          <div class="stat-val">{{if .TotalUsed}}{{.TotalUsed}}{{else}}—{{end}}</div>
+          <div class="stat-label">Used by all users</div>
+        </div>
+        {{if .FSTotal}}
+        <div class="stat">
+          <div class="stat-val">{{.FSFree}}</div>
+          <div class="stat-label">Free on data filesystem</div>
+        </div>
+        <div class="stat">
+          <div class="stat-val">{{.FSTotal}}</div>
+          <div class="stat-label">Data filesystem size</div>
+        </div>
+        {{end}}
+      </div>
+    </div>
+    {{template "dashboard-webdav" .}}
+  </main>
+</div>
+</body>
+</html>{{end}}
+
+
+{{define "dashboard-webdav"}}
+{{/* Polls only while this element is on screen: leaving the page removes it. */}}
+{{with .WebDAV}}
+<div id="dashboard-webdav" class="card" hx-get="/admin/dashboard/webdav" hx-trigger="every 30s" hx-swap="outerHTML">
+  <h2>WebDAV activity</h2>
+  <p class="muted small">WebDAV listener only, counted in memory since the process started; a restart resets
+     everything. Updated every 30 s, last at {{.UpdatedAt}}. Bytes are counted on the wire (TLS included).
+     More on the <a href="/admin/status">Status</a> page.</p>
+  <div class="stat-grid activity-tiles">
+    {{range .Tiles}}
+    <div class="stat">
+      <div class="stat-label">{{.Label}}</div>
+      <div class="stat-val">{{.Hour}}</div>
+      {{if .Now}}<div class="stat-sub">now</div>
+      {{else}}<div class="stat-sub">last hour</div>
+      <div class="stat-day">{{.Day}} <span class="muted">· {{$.WebDAV.DayHeader}}</span></div>{{end}}
+    </div>
+    {{end}}
+  </div>
+</div>
+{{end}}
+{{end}}

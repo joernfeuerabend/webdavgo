@@ -1,0 +1,34 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Jörn Feuerabend -->
+{{define "connections"}}
+{{/* Polls only while this element is on screen: leaving the page removes it. */}}
+<div id="connections" class="card card-spaced" hx-get="/admin/status/connections" hx-trigger="every 2s" hx-swap="outerHTML">
+  <h2>Connections</h2>
+  <p class="muted small">Open connections on both listeners, updated every 2 s. Bytes are counted on the wire (TLS included); rates are averaged since the previous update. Times are UTC.</p>
+  {{if .Conns}}
+  <div class="table-scroll">
+  <table id="conn-table">
+    <thead><tr><th>Remote IP</th><th>Listener</th><th>Protocol</th><th>Connected since</th><th>Identity</th><th>Running requests</th><th>Received</th><th>Sent</th><th>Rate in</th><th>Rate out</th></tr></thead>
+    <tbody>
+    {{range .Conns}}
+    <tr>
+      <td><code>{{.Remote}}</code></td>
+      <td>{{.Listener}}</td>
+      <td>{{.Proto}}</td>
+      <td>{{.Since}} <span class="muted small">({{.Age}})</span></td>
+      <td>{{if eq .Identity "unauthenticated"}}<span class="muted">unauthenticated</span>{{else}}{{.Identity}}{{end}}</td>
+      <td>{{range .Requests}}<code>{{.}}</code><br>{{else}}<span class="muted">idle</span>{{end}}</td>
+      <td>{{.Received}}</td>
+      <td>{{.Sent}}</td>
+      <td>{{.RateIn}}</td>
+      <td>{{.RateOut}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{else}}
+  <p class="muted">No open connections.</p>
+  {{end}}
+</div>
+{{end}}

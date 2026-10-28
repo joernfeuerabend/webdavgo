@@ -1,0 +1,34 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Jörn Feuerabend -->
+{{define "status"}}<!DOCTYPE html>
+<html lang="en">
+<head>{{template "head" .}}<title>webdavgo – Status</title></head>
+<body hx-boost="true" hx-headers='{"X-CSRF-Token": "{{.CSRF}}"}'>
+<div class="layout">
+  {{template "nav" .}}
+  <main>
+    <h1>Status</h1>
+    <div class="stat-grid">
+      <div class="stat">
+        <div class="stat-val">{{.DiskSize}}</div>
+        <div class="stat-label">Data directory usage</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val">{{.DBSize}}</div>
+        <div class="stat-label">Database size</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val">{{.ActiveSessions}}</div>
+        <div class="stat-label">Active admin sessions</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val">{{.ActiveShares}}</div>
+        <div class="stat-label">Active shares</div>
+      </div>
+    </div>
+    {{template "activity" .}}
+    {{template "connections" .}}
+  </main>
+</div>
+</body>
+</html>{{end}}
