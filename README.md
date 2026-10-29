@@ -50,7 +50,7 @@ To get a server running, see [Quick start](#quick-start).
   CSRF protection
 
 **Operation**
-- First-run setup wizard with a one-time token and terminal QR code
+- First-run setup wizard with a one-time token
 - `webdavgo install` sets the server up as a system service
 - Web admin UI for users, shares, connections, activity and a live log
 - Files are stored as plain files in the data directory and can be backed

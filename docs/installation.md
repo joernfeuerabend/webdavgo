@@ -10,25 +10,51 @@
 On first start, the console prints:
 
 ```
-SETUP REQUIRED
-The admin UI is listening on all interfaces (port 8443) – reachable from any network that can reach port 8443.
-Open one of these URLs in a browser:
-  https://192.0.2.20:8443/setup?token=<hex>
-  https://[2001:db8::20]:8443/setup?token=<hex>
-  https://localhost:8443/setup?token=<hex>
-<QR code for the first LAN IPv4 URL>
-Admin certificate SHA-256 fingerprint: 83:27:50:…:AC:49
-The browser will warn that the certificate is self-signed; continue only if it shows this fingerprint.
-Token expires at <time>
+================================================================
+  webdavgo: SETUP REQUIRED
+================================================================
+
+  No admin account exists yet. Create it in the admin UI.
+
+  1. Open the admin UI in a browser:
+
+       https://192.0.2.20:8443/
+       https://[2001:db8::20]:8443/
+       https://localhost:8443/
+
+     The admin UI is listening on all interfaces (port 8443) …
+
+  2. The browser warns that the certificate is self-signed.
+     Continue only if it shows this SHA-256 fingerprint:
+
+       83:27:50:…:AC:49
+
+  3. Enter this setup token when the page asks for it:
+
+       Token: <hex>
+
+     Valid until 2026-10-29 10:23 UTC.
+     For a new token run: sudo webdavgo setup-info
+
+  Direct link with the token included:
+
+       https://192.0.2.20:8443/setup?token=<hex>
+       https://[2001:db8::20]:8443/setup?token=<hex>
+       https://localhost:8443/setup?token=<hex>
+
+================================================================
 ```
 
 There is one URL per LAN address of the host (IPv4 first), plus `localhost`.
-The QR code is meant for a phone on the same network. The second line names
-the address the admin listener is actually bound to (see
-[Admin access](administration.md#admin-access)). webdavgo cannot see a firewall or router in
-front of the host, so it never claims that the port is private. Open a URL, accept the
-self-signed certificate after comparing its fingerprint (see
-[Admin access](administration.md#admin-access)), and create the admin account. Setup then
+The line below them names the address the admin listener is actually bound
+to (see [Admin access](administration.md#admin-access)). webdavgo cannot see
+a firewall or router in front of the host, so it never claims that the port
+is private. The expiry time is in UTC.
+
+Open an admin URL, accept the self-signed certificate after comparing its
+fingerprint (see [Admin access](administration.md#admin-access)), and enter
+the token on the setup page. The direct links carry the token and skip that
+step. Then create the admin account. Setup then
 continues directly with the TOTP enrolment for that account. It is complete,
 and WebDAV starts serving (503 until then), once a first code is confirmed and
 the recovery codes have been shown. No restart is needed.
@@ -99,9 +125,10 @@ It prints its plan first, then:
    also when logrotate is not installed, which the plan then points out.
 7. runs `systemctl daemon-reload` and `systemctl enable --now webdavgo`.
 8. prints where the admin listener is bound and how far it is reachable, the
-   admin URLs (`https://<LAN address>:8443/admin/`), the admin
-   certificate's SHA-256 fingerprint and, while no admin exists, the setup URL
-   with its token and a QR code. After an update that changes the database
+   admin URLs and the admin certificate's SHA-256 fingerprint. While no
+   admin exists, this is the setup block shown under [Run](#run), with the
+   setup token on its own line and the setup URLs. Once an admin exists,
+   the admin URLs are `https://<LAN address>:8443/admin/`. After an update that changes the database
    schema it first waits (up to two minutes, "Waiting for the service to
    migrate the database ...") until the restarted service has migrated it.
 
@@ -181,14 +208,17 @@ network.
 the TLS-ALPN-01 challenge, which the CA always sends to port 443, and
 webdavgo answers it on its own port 443.
 
-**First start.** The setup URL with its token is in `docker logs webdavgo`.
-`docker exec webdavgo webdavgo setup-info` prints it again, with a new token
-once the old one has expired. The printed URLs show the container's
-addresses, which are not reachable from outside the host. Open the admin UI
-at the host's address instead, `https://<host>:8443/`. While no admin exists
-it leads to the setup page, which asks for the token: copy the value after
-`token=` from the printed URL. Then continue as in the
-[Quick start](../README.md#quick-start).
+**First start.** The setup block (see [Run](#run)) is in
+`docker logs webdavgo`. `docker exec webdavgo webdavgo setup-info` prints
+it again, with a new token once the old one has expired. In a container,
+step 1 of the block adds "In a container, use the host's address and the
+published port instead.", and the line for a new token names the
+`docker exec` command. The printed URLs show the container's addresses,
+which are not reachable from outside the host. Open the admin UI at the
+host's address instead, `https://<host>:8443/`. While no admin exists it
+leads to the setup page, which asks for the token: copy it from the
+`Token:` line. The page also lists the commands that show the token. Then
+continue as in the [Quick start](../README.md#quick-start).
 
 **Config file.** A new container creates the config file from
 `webdavgo.example.conf` with `health_enabled = true`, `access_log = ""` and
@@ -300,8 +330,8 @@ element. The old listener keeps running
 and nothing was saved: the config file is unchanged, and the TLS & domain
 section shows the submitted values with the error, to correct and send
 again. The **finish page** (`/admin/domain/done`) shows the certificate status
-(issuer, expiry, next renewal or ARI window, last error), the public WebDAV
-URL `https://<domain>/` and a QR code of that URL for the iOS app.
+(issuer, expiry, next renewal or ARI window, last error) and the public
+WebDAV URL `https://<domain>/`.
 
 ## Internet deployment
 
