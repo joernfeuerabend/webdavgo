@@ -140,6 +140,24 @@ the user and systemctl steps (used by test.sh).
 Then, in the browser: setup (admin account) → TOTP → **Domain &
 certificate** → done.
 
+**`webdavgo setup-info`** prints the same information again at any time
+(`sudo webdavgo setup-info`). As root it
+runs itself as the `webdavgo` user so that no root-owned database files
+appear. The setup token lives in the database, valid for one hour. Once it
+has expired, `setup-info` issues a new one that the running service accepts.
+After setup it only says that setup is complete.
+
+**`webdavgo uninstall`** stops and disables the service and removes the
+unit, `/etc/logrotate.d/webdavgo` and the binary. It keeps `/etc/webdavgo`,
+`/var/lib/webdavgo` and `/var/log/webdavgo` and says so. `-purge` also
+removes all three and the system user, after you type the hostname (or with
+`-yes`).
+
+**`require_tls = true`** (set by `install`): as long as `tls_mode` is `off`,
+the WebDAV listener is not started on a network address (logged at Warn).
+Binding it to a loopback address (`webdav_listen_address = "127.0.0.1"`) is still allowed.
+The admin listener runs as usual, so the Settings page can turn TLS on.
+
 ## Container
 
 The image `joernfeuerabend/webdavgo` on Docker Hub (linux/amd64 and
@@ -277,24 +295,6 @@ tar -xzf webdavgo_${VERSION}_linux_$ARCH.tar.gz -C context LICENSE THIRD_PARTY_L
 curl -LO https://raw.githubusercontent.com/joernfeuerabend/webdavgo/v$VERSION/Dockerfile
 docker build -f Dockerfile --build-arg VERSION=$VERSION -t webdavgo:$VERSION context
 ```
-
-**`webdavgo setup-info`** prints the same information again at any time
-(`sudo webdavgo setup-info`). As root it
-runs itself as the `webdavgo` user so that no root-owned database files
-appear. The setup token lives in the database, valid for one hour. Once it
-has expired, `setup-info` issues a new one that the running service accepts.
-After setup it only says that setup is complete.
-
-**`webdavgo uninstall`** stops and disables the service and removes the
-unit, `/etc/logrotate.d/webdavgo` and the binary. It keeps `/etc/webdavgo`,
-`/var/lib/webdavgo` and `/var/log/webdavgo` and says so. `-purge` also
-removes all three and the system user, after you type the hostname (or with
-`-yes`).
-
-**`require_tls = true`** (set by `install`): as long as `tls_mode` is `off`,
-the WebDAV listener is not started on a network address (logged at Warn).
-Binding it to a loopback address (`webdav_listen_address = "127.0.0.1"`) is still allowed.
-The admin listener runs as usual, so the Settings page can turn TLS on.
 
 ## Domain & certificate
 
