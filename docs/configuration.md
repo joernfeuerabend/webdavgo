@@ -4,9 +4,10 @@ All configuration lives in one file, `webdavgo.conf`: flat `key = value`
 lines (TOML syntax), `#` starts a comment. Without `-config`, webdavgo reads
 `/etc/webdavgo/webdavgo.conf`. If that file, or the one given with
 `-config`, does not exist, the server creates it (and its directory) from
-[`webdavgo.example.conf`](../webdavgo.example.conf), i.e. with the default
-values below, logs that at Info, and reads it. If it cannot be created, the
-server exits with an error naming the path and the reason. `setup-info` and
+[`webdavgo.example.conf`](../cmd/webdavgo/webdavgo.example.conf), i.e.
+with the default values below, logs that at Info, and reads it. If it
+cannot be created, the server exits with an error naming the path and the
+reason. `setup-info` and
 `reset-totp` never create it: they need the service's file. Every key is
 optional. The database holds runtime data only (users,
 shares, quota counters, setup token, session epochs), no configuration.
@@ -85,7 +86,7 @@ as one `config` line.
 Every value is a plain number in one fixed unit, as the table says:
 durations in whole seconds, sizes in KB and rates in KB/s (decimal, 1 KB =
 1000 bytes, like the quota's GB). A commented example with every key is in
-[`webdavgo.example.conf`](../webdavgo.example.conf).
+[`webdavgo.example.conf`](../cmd/webdavgo/webdavgo.example.conf).
 
 ## Settings page
 
