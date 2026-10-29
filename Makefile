@@ -48,7 +48,6 @@ go.uber.org/zap/exp MIT
 golang.org/x/crypto BSD-3-Clause
 golang.org/x/net BSD-3-Clause
 golang.org/x/sys BSD-3-Clause
-golang.org/x/term BSD-3-Clause
 golang.org/x/text BSD-3-Clause
 modernc.org/libc BSD-3-Clause AND MIT
 modernc.org/mathutil BSD-3-Clause
@@ -105,9 +104,10 @@ export LICENSE_NOTICES_AWK
 # "go mod download" first), and third_party/htmx/LICENSE for the embedded
 # assets/htmx.min.js, which carries none; replace that file when htmx is
 # updated. Below each component follow the notices LICENSE_NOTICES_AWK finds
-# in its Go and assembly files compiled into a dist binary.
+# in its Go and assembly files compiled into a dist binary. LC_ALL=C makes
+# sort and awk order the components the same way in every locale.
 licenses:
-	@set -e; \
+	@set -e; export LC_ALL=C; \
 	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
 	for p in $(PLATFORMS); do \
 		CGO_ENABLED=0 GOOS=$${p%/*} GOARCH=$${p#*/} go list -deps \
