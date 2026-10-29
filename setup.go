@@ -15,8 +15,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	qrterminal "github.com/mdp/qrterminal/v3"
 )
 
 var usernameRE = regexp.MustCompile(`^[a-z0-9_-]{3,32}$`)
@@ -44,24 +42,62 @@ func enterSetupMode(webguiAddr, fingerprint string) {
 	setupEverEntered = true
 	setupMu.Unlock()
 
-	printSetupBanner(webguiAddr, setupURLs(webguiAddr, tok), fingerprint, exp)
+	printSetupBanner(webguiAddr, tok, fingerprint, exp)
 	logger.Info("setup mode entered", "expires", exp.Format(time.RFC3339))
 }
 
+// consoleRule frames the console blocks, so that they stand out between
+// the log lines around them.
+const consoleRule = "================================================================"
+
 // printSetupBanner writes the setup instructions to the console. The token
-// is in the URLs only, never in a log line.
-func printSetupBanner(webguiAddr string, urls []string, fingerprint string, exp time.Time) {
-	fmt.Println("SETUP REQUIRED")
-	fmt.Printf("The admin UI is %s.\n", adminReach(webguiAddr))
-	fmt.Println("Open one of these URLs in a browser:")
-	for _, u := range urls {
-		fmt.Printf("  %s\n", u)
+// is printed here only, never in a log line. The token has a line of its
+// own because a container prints URLs with its own addresses, and the
+// operator then types the token into the setup page at the host's address.
+func printSetupBanner(webguiAddr, token, fingerprint string, exp time.Time) {
+	newToken := "sudo webdavgo setup-info"
+	if containerMode {
+		newToken = "docker exec <container> webdavgo setup-info"
 	}
-	// The QR code is for a phone on the LAN, which cannot reach localhost.
-	qrterminal.Generate(urls[0], qrterminal.L, os.Stdout)
-	fmt.Printf("Admin certificate SHA-256 fingerprint: %s\n", fingerprint)
-	fmt.Println("The browser will warn that the certificate is self-signed; continue only if it shows this fingerprint.")
-	fmt.Printf("Token expires at %s\n", exp.Format(time.RFC3339))
+	var b strings.Builder
+	line := func(format string, a ...any) { fmt.Fprintf(&b, format+"\n", a...) }
+	line(consoleRule)
+	line("  webdavgo: SETUP REQUIRED")
+	line(consoleRule)
+	line("")
+	line("  No admin account exists yet. Create it in the admin UI.")
+	line("")
+	line("  1. Open the admin UI in a browser:")
+	line("")
+	for _, u := range adminURLs(webguiAddr, "/") {
+		line("       %s", u)
+	}
+	line("")
+	line("     The admin UI is %s.", adminReach(webguiAddr))
+	if containerMode {
+		line("     In a container, use the host's address and the published port instead.")
+	}
+	line("")
+	line("  2. The browser warns that the certificate is self-signed.")
+	line("     Continue only if it shows this SHA-256 fingerprint:")
+	line("")
+	line("       %s", fingerprint)
+	line("")
+	line("  3. Enter this setup token when the page asks for it:")
+	line("")
+	line("       Token: %s", token)
+	line("")
+	line("     Valid until %s.", exp.UTC().Format("2006-01-02 15:04 UTC"))
+	line("     For a new token run: %s", newToken)
+	line("")
+	line("  Direct link with the token included:")
+	line("")
+	for _, u := range setupURLs(webguiAddr, token) {
+		line("       %s", u)
+	}
+	line("")
+	line(consoleRule)
+	fmt.Print(b.String())
 }
 
 // setupURLs returns the setup URL for every address the admin listener can
@@ -327,13 +363,20 @@ func runSetupInfo(args []string) int {
 		return 1
 	}
 
-	fmt.Printf("webdavgo admin UI (HTTPS only), %s:\n", adminReach(webguiAddr))
-	for _, u := range adminURLs(webguiAddr, "/admin/") {
-		fmt.Printf("  %s\n", u)
-	}
 	if hasAdmin {
-		fmt.Printf("Admin certificate SHA-256 fingerprint: %s\n", fp)
-		fmt.Println("Setup is complete: an admin account exists. Sign in at one of the URLs above.")
+		fmt.Println(consoleRule)
+		fmt.Printf("  webdavgo admin UI (HTTPS only), %s:\n", adminReach(webguiAddr))
+		fmt.Println(consoleRule)
+		fmt.Println()
+		for _, u := range adminURLs(webguiAddr, "/admin/") {
+			fmt.Printf("       %s\n", u)
+		}
+		fmt.Println()
+		fmt.Printf("  Admin certificate SHA-256 fingerprint: %s\n", fp)
+		fmt.Println()
+		fmt.Println("  Setup is complete: an admin account exists. Sign in at one of the URLs above.")
+		fmt.Println()
+		fmt.Println(consoleRule)
 		return 0
 	}
 	tok, exp, err := issueSetupToken()
@@ -341,8 +384,7 @@ func runSetupInfo(args []string) int {
 		logger.Error("cannot issue setup token", "err", err)
 		return 1
 	}
-	fmt.Println()
-	printSetupBanner(webguiAddr, setupURLs(webguiAddr, tok), fp, exp)
+	printSetupBanner(webguiAddr, tok, fp, exp)
 	return 0
 }
 

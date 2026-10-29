@@ -5,7 +5,6 @@ go 1.26.0
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/caddyserver/certmagic v0.25.6
-	github.com/mdp/qrterminal/v3 v3.2.1
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.57.0
 	golang.org/x/net v0.59.0
@@ -28,7 +27,6 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

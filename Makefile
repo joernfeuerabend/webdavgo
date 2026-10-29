@@ -38,7 +38,6 @@ github.com/dustin/go-humanize MIT
 github.com/google/uuid BSD-3-Clause
 github.com/klauspost/cpuid/v2 MIT
 github.com/libdns/libdns MIT
-github.com/mdp/qrterminal/v3 MIT
 github.com/mholt/acmez/v3 Apache-2.0
 github.com/miekg/dns BSD-3-Clause
 github.com/remyoudompheng/bigfft BSD-3-Clause
