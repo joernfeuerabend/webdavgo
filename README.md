@@ -1,5 +1,7 @@
 # webdavgo
 
+<a href="https://cla-assistant.io/joernfeuerabend/webdavgo"><img src="https://cla-assistant.io/readme/badge/joernfeuerabend/webdavgo" alt="CLA assistant" /></a>
+
 webdavgo is a WebDAV file server in a single Go binary. It supports
 WebDAV SEARCH (RFC 5323) and includes what is needed to run it directly
 on the internet.
@@ -151,5 +153,12 @@ Copyright (C) 2026 Jörn Feuerabend
 
 This program is licensed under the GNU Affero General Public License,
 version 3 only (AGPL-3.0-only). See [LICENSE](LICENSE).
+
+A commercial license is available for use cases where the AGPL
+obligations are not acceptable. Contact licensing@webdavgo.com.
+
+Contributions require signing the Contributor License Agreement. See
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
 Third-party components and their licenses are listed in
 [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).
