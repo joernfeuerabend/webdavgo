@@ -1,7 +1,5 @@
 # webdavgo
 
-<a href="https://cla-assistant.io/joernfeuerabend/webdavgo"><img src="https://cla-assistant.io/readme/badge/joernfeuerabend/webdavgo" alt="CLA assistant" /></a>
-
 webdavgo is a WebDAV file server in a single Go binary. It supports
 WebDAV SEARCH (RFC 5323) and includes what is needed to run it directly
 on the internet.
