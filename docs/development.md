@@ -3,9 +3,9 @@
 ## Build
 
 ```sh
-go build -o webdavgo      # or: make build
-make dist                 # static binaries for linux/amd64, linux/arm64 in dist/
-make test                 # go vet, then test.sh
+go build -o webdavgo ./cmd/webdavgo  # or: make build
+make dist                           # static binaries for linux/amd64, linux/arm64 in dist/
+make test                           # go vet, then test.sh
 make clean
 ```
 

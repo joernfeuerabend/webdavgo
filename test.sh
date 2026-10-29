@@ -117,7 +117,7 @@ write_config
 
 # start_server passes its arguments to the server as extra flags.
 start_server() {
-    go build -o "$TEST_DIR/webdavgo"
+    go build -o "$TEST_DIR/webdavgo" ./cmd/webdavgo
     start_binary webdavgo "$@"
 }
 
@@ -2533,7 +2533,7 @@ fi
 # the forced-close path run while new requests keep arriving.
 stop_server
 write_config 'shutdown_timeout = "1s"'
-go build -race -o "$TEST_DIR/webdavgo-race"
+go build -race -o "$TEST_DIR/webdavgo-race" ./cmd/webdavgo
 GORACE="halt_on_error=0 exitcode=66" start_binary webdavgo-race
 # bcrypt is many times slower under -race; one login fills the auth cache so
 # the load below is not throttled by it.
@@ -2573,7 +2573,7 @@ fi
 # the own-TOTP-reset throttle and slow reads. The domain wizard criteria
 # (C137–C140) need Pebble and follow the ACME criteria.
 # ============================================================
-go build -o "$TEST_DIR/webdavgo"
+go build -o "$TEST_DIR/webdavgo" ./cmd/webdavgo
 mode_of() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
 
 # ---- C125: install -root writes the file layout, config and hardened unit ----
@@ -2617,7 +2617,7 @@ echo 'data' >"$INST_ROOT/var/lib/webdavgo/keep.db"
 C126_EXIT=0; "$TEST_DIR/webdavgo" install -root "$INST_ROOT" >"$TEST_DIR/install2.txt" 2>&1 || C126_EXIT=$?
 C126_KEEP=$(grep -c -e 'keep .*/usr/local/bin/webdavgo (already this binary)' -e 'keep .*/config.toml (an existing config is never overwritten)' \
     -e 'keep .*/webdavgo.service (unchanged)' "$TEST_DIR/install2.txt" || true)
-go build -ldflags "-X main.version=c126" -o "$TEST_DIR/webdavgo-v2"
+go build -ldflags "-X main.version=c126" -o "$TEST_DIR/webdavgo-v2" ./cmd/webdavgo
 C126_UPD=0; "$TEST_DIR/webdavgo-v2" install -root "$INST_ROOT" >"$TEST_DIR/install3.txt" 2>&1 || C126_UPD=$?
 C126_COPY=$(grep -c 'copy .*webdavgo-v2 to .*/usr/local/bin/webdavgo (temporary file, then rename)' "$TEST_DIR/install3.txt" || true)
 C126_NEWBIN=$(cmp -s "$TEST_DIR/webdavgo-v2" "$INST_ROOT/usr/local/bin/webdavgo" && echo yes || echo no)
@@ -3183,7 +3183,7 @@ cp "$TEST_DB" "$SC_DIR/webdavgo.db"
 [[ -f "$TEST_DB-wal" ]] && cp "$TEST_DB-wal" "$SC_DIR/webdavgo.db-wal"
 cp "$DATA_DIR/certs/admin-selfsigned.crt" "$SC_DIR/certs/"
 printf 'data_dir = "%s"\n' "$SC_DIR" >"$SC_CFG"
-SC_TARGET=$(jq -r '.target_version' migrations.json)
+SC_TARGET=$(jq -r '.target_version' cmd/webdavgo/migrations.json)
 sc_version() { sqlite3 "$SC_DIR/webdavgo.db" "PRAGMA user_version;" 2>/dev/null || echo -1; }
 sc_state() {
     echo "$(sc_version) $(sqlite3 "$SC_DIR/webdavgo.db" "SELECT (SELECT COUNT(*) FROM totp) || '/' || (SELECT COUNT(*) FROM recovery_codes) || '/' || (SELECT COUNT(*) FROM settings);" 2>/dev/null) $(ls "$SC_DIR" | grep -c 'bak-' || true)"

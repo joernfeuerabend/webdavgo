@@ -11,7 +11,7 @@ PLATFORMS := linux/amd64 linux/arm64
 
 # build: for the current OS and architecture.
 build:
-	go build -trimpath -ldflags "-X main.version=$(VERSION)" -o webdavgo .
+	go build -trimpath -ldflags "-X main.version=$(VERSION)" -o webdavgo ./cmd/webdavgo
 
 # dist: static, stripped binaries for every platform into dist/, with the
 # license files every distributed binary must be accompanied by.
@@ -21,7 +21,7 @@ dist:
 		os=$${p%/*}; arch=$${p#*/}; \
 		echo "dist/webdavgo-$(VERSION)-$$os-$$arch"; \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags "$(LDFLAGS)" \
-			-o dist/webdavgo-$(VERSION)-$$os-$$arch . || exit 1; \
+			-o dist/webdavgo-$(VERSION)-$$os-$$arch ./cmd/webdavgo || exit 1; \
 	done
 	cp LICENSE THIRD_PARTY_LICENSES dist/
 
@@ -102,21 +102,22 @@ export LICENSE_NOTICES_AWK
 # LICENSE*, COPYING*, NOTICE*, PATENTS* and *-LICENSE file at the root of
 # each module linked into a dist binary (from the module cache, so run
 # "go mod download" first), and third_party/htmx/LICENSE for the embedded
-# assets/htmx.min.js, which carries none; replace that file when htmx is
-# updated. Below each component follow the notices LICENSE_NOTICES_AWK finds
-# in its Go and assembly files compiled into a dist binary. LC_ALL=C makes
-# sort and awk order the components the same way in every locale.
+# cmd/webdavgo/assets/htmx.min.js, which carries none; replace that file
+# when htmx is updated. Below each component follow the notices
+# LICENSE_NOTICES_AWK finds in its Go and assembly files compiled into a
+# dist binary. LC_ALL=C makes sort and awk order the components the same
+# way in every locale.
 licenses:
 	@set -e; export LC_ALL=C; \
 	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
 	for p in $(PLATFORMS); do \
 		CGO_ENABLED=0 GOOS=$${p%/*} GOARCH=$${p#*/} go list -deps \
-			-f '{{with .Module}}{{if not .Main}}{{.Path}} {{.Version}} {{.Dir}}{{end}}{{end}}' . \
+			-f '{{with .Module}}{{if not .Main}}{{.Path}} {{.Version}} {{.Dir}}{{end}}{{end}}' ./cmd/webdavgo \
 			| sort -u | sed "s|\$$| $$p|"; \
 	done | sort > "$$tmp/deps"; \
 	for p in $(PLATFORMS); do \
 		CGO_ENABLED=0 GOOS=$${p%/*} GOARCH=$${p#*/} go list -deps \
-			-f '{{$$d := .Dir}}{{range .GoFiles}}{{$$d}}/{{.}}{{"\n"}}{{end}}{{range .SFiles}}{{$$d}}/{{.}}{{"\n"}}{{end}}' .; \
+			-f '{{$$d := .Dir}}{{range .GoFiles}}{{$$d}}/{{.}}{{"\n"}}{{end}}{{range .SFiles}}{{$$d}}/{{.}}{{"\n"}}{{end}}' ./cmd/webdavgo; \
 	done | grep . | sort -u > "$$tmp/files"; \
 	awk -v n=$(words $(PLATFORMS)) '{ k = $$1 " " $$2 " " $$3; if (!(k in c)) o[++m] = k; \
 		c[k]++; p[k] = p[k] (p[k] == "" ? "" : ", ") $$4 } \
@@ -132,7 +133,7 @@ licenses:
 		done; \
 	done; \
 	[ -f "$$tmp/go/LICENSE" ] || { echo "licenses: no LICENSE in $$goroot or its parent" >&2; exit 1; }; \
-	htmx=$$(grep -oE 'version:"[^"]+"' assets/htmx.min.js | cut -d'"' -f2); \
+	htmx=$$(grep -oE 'version:"[^"]+"' cmd/webdavgo/assets/htmx.min.js | cut -d'"' -f2); \
 	[ -f third_party/htmx/LICENSE ] || { echo "licenses: third_party/htmx/LICENSE missing" >&2; exit 1; }; \
 	rule=$$(printf '%080d' 0 | tr 0 =); thin=$$(printf '%080d' 0 | tr 0 -); \
 	entry() { s=$$(spdx "$$3") || exit 1; \
