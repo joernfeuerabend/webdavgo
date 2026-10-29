@@ -296,6 +296,72 @@ curl -LO https://raw.githubusercontent.com/joernfeuerabend/webdavgo/v$VERSION/Do
 docker build -f Dockerfile --build-arg VERSION=$VERSION -t webdavgo:$VERSION context
 ```
 
+### Log files on the host (optional)
+
+This is optional. By default a container logs to stdout, which
+`docker logs` shows, and nothing below is needed for that. To keep the logs
+as files on the host instead, mount an additional host directory for them.
+It must be writable by UID 65532:
+
+```sh
+sudo install -d -o 65532 -g 65532 -m 0750 /srv/webdavgo-logs
+docker run -d --name webdavgo \
+  -p 443:443 -p 8443:8443 \
+  -v webdavgo:/var/lib/webdavgo \
+  -v /srv/webdavgo-logs:/var/log/webdavgo \
+  --stop-timeout 35 \
+  joernfeuerabend/webdavgo:0.1
+```
+
+With Compose, add the directory to `volumes`:
+
+```yaml
+    volumes:
+      - webdavgo:/var/lib/webdavgo
+      - /srv/webdavgo-logs:/var/log/webdavgo
+```
+
+Then set `access_log` and `server_log` to files in that directory, on the
+Settings page (Logging) or in `webdavgo.conf` in the volume:
+
+```toml
+access_log = "/var/log/webdavgo/access.log"
+server_log = "/var/log/webdavgo/webdavgo.log"
+```
+
+Save or Apply on the Settings page only writes the new paths to the config
+file. They take effect after a restart of the container
+(`docker restart webdavgo`), and until then the Settings page lists them
+as waiting for a restart. After the restart, `docker logs` shows only a
+copy of every Error record, which goes to stderr while `server_log` is set,
+records from before the config file is read, and the setup block while no
+admin exists. Everything else goes to the files, which webdavgo creates
+with mode 0640.
+
+There is no logrotate in the container. Rotate the files on the host, for
+example with `/etc/logrotate.d/webdavgo-container`. After the rotation,
+`docker kill -s USR1` makes webdavgo reopen its log files:
+
+```
+/srv/webdavgo-logs/*.log {
+    daily
+    rotate 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    create 0640 65532 65532
+    sharedscripts
+    postrotate
+        docker kill -s USR1 webdavgo >/dev/null 2>&1 || true
+    endscript
+}
+```
+
+Replace `webdavgo` in `docker kill` with the container's name. Format and
+contents of the files are described under
+[Log files](administration.md#log-files).
+
 ## Domain & certificate
 
 **Admin → Settings → TLS & domain** (the first setup leads there after the
