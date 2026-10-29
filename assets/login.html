@@ -37,12 +37,15 @@
     </label>
     <button type="submit">Continue</button>
   </form>
-  <p class="small muted card-spaced">The token is part of the setup URL the server prints at startup:</p>
-  <ul class="small muted link-list">
-    <li>Installed service: run <code>sudo webdavgo setup-info</code></li>
-    <li>Container: run <code>docker exec &lt;container&gt; webdavgo setup-info</code>, or look at <code>docker logs &lt;container&gt;</code> after the first start</li>
-  </ul>
-  <p class="small muted">setup-info issues a new token if the old one expired.</p>
+  <p class="small muted card-spaced">The server prints the token at its first start, as part of the setup URL and
+     on its own "Token:" line. To see it again, run:</p>
+  <p class="cmd-label">Installed service:</p>
+  <pre class="cmd">sudo webdavgo setup-info</pre>
+  <p class="cmd-label">Container:</p>
+  <pre class="cmd">docker exec &lt;container&gt; webdavgo setup-info</pre>
+  <pre class="cmd">docker logs &lt;container&gt;</pre>
+  <p class="small muted">setup-info issues a new token if the old one expired. In a container it runs inside the
+     running container, and docker logs shows the output of the first start.</p>
   <p class="warranty">This program comes with ABSOLUTELY NO WARRANTY.</p>
 </div>
 </body>
