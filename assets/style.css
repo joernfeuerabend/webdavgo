@@ -178,6 +178,21 @@ details input { width: auto; flex: 1; }
 .setup-wrap h1, .login-wrap h1 { margin-bottom: 1.25rem; }
 .setup-wrap form button, .login-wrap form button { margin-top: .5rem; width: 100%; }
 .setup-wrap .warranty, .login-wrap .warranty { margin-top: 1rem; text-align: center; font-size: .78rem; color: var(--muted); }
+/* Commands on the setup token page: one per block, selected with one
+   click so that they can be copied whole. */
+.cmd-label { margin-top: .75rem; font-size: .82rem; color: var(--muted); }
+pre.cmd {
+  margin: .35rem 0;
+  padding: .5rem .75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: .85rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.setup-wrap pre.cmd + p.small { margin-top: .75rem; }
 
 /* ---- about ---- */
 .about p + p { margin-top: .75rem; }

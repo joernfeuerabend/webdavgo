@@ -83,7 +83,7 @@
 
 {{define "tls-status"}}
 {{if .TLSActive}}{{template "cert-status" .Cert}}
-<p class="small"><a href="/admin/domain/done">Server URL and QR code for the iOS app</a></p>
+<p class="small"><a href="/admin/domain/done">Server URL and certificate status</a></p>
 {{else}}<p class="banner-warn">TLS is off: WebDAV credentials travel in clear text. Use only for development or on a
   trusted LAN. To serve WebDAV over HTTPS, set tls_mode to acme and the domain below, then Apply.</p>{{end}}
 {{if .Job.Running}}<p class="banner">A certificate request for {{.Job.Domain}} is running: <a href="/admin/domain">show progress</a>.</p>{{end}}

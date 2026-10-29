@@ -657,8 +657,13 @@ func buildWebGUIHandler() http.Handler {
 			return
 		}
 
-		// Root redirect: send bare "/" to the admin dashboard (or login).
+		// Root redirect: send bare "/" to the admin dashboard (or login), or
+		// to the setup token page while no admin exists.
 		if r.URL.Path == "/" {
+			if isSetupActive() && !setupAdminCreated() {
+				http.Redirect(w, r, "/setup", http.StatusFound)
+				return
+			}
 			http.Redirect(w, r, "/admin/", http.StatusFound)
 			return
 		}
@@ -681,9 +686,10 @@ func buildWebGUIHandler() http.Handler {
 		if strings.HasPrefix(r.URL.Path, "/admin") {
 			// Once setup has created the admin, login and enrolment must be
 			// reachable to finish it; every other page needs a full session,
-			// which only exists after enrolment.
+			// which only exists after enrolment. Before that, the plain admin
+			// URL leads to the page that asks for the setup token.
 			if isSetupActive() && !setupAdminCreated() {
-				http.Error(w, "setup required, see server console", http.StatusServiceUnavailable)
+				http.Redirect(w, r, "/setup", http.StatusFound)
 				return
 			}
 			adminMux.ServeHTTP(w, r)

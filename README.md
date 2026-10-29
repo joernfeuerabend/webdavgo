@@ -50,7 +50,7 @@ To get a server running, see [Quick start](#quick-start).
   CSRF protection
 
 **Operation**
-- First-run setup wizard with a one-time token and terminal QR code
+- First-run setup wizard with a one-time token
 - `webdavgo install` sets the server up as a system service
 - Web admin UI for users, shares, connections, activity and a live log
 - Files are stored as plain files in the data directory and can be backed
@@ -110,6 +110,8 @@ block port 8443 in the firewall and open it through an SSH tunnel:
 Setup token expired? `sudo webdavgo setup-info` prints a new one. To
 update, download a newer release and run `sudo ./webdavgo install` again.
 Data and configuration are kept.
+
+To run webdavgo with Docker instead, see [Container](docs/installation.md#container).
 
 ## Documentation
 

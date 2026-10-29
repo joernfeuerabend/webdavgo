@@ -20,3 +20,33 @@
 </div>
 </body>
 </html>{{end}}
+
+{{/* GET, so that the token arrives in the query string like in the setup
+     URL and handleSetup checks it in the same place. */}}
+{{define "setup-token"}}<!DOCTYPE html>
+<html lang="en">
+<head>{{template "head" .}}<title>webdavgo Setup</title></head>
+<body>
+<div class="setup-wrap">
+  <h1><span class="wordmark">webdav<span class="wordmark-go">go</span></span> Setup</h1>
+  <p>Enter the setup token to create the initial admin account.</p>
+  {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+  <form method="get" action="/setup" hx-boost="false">
+    <label>Setup token
+      <input type="text" name="token" autofocus required autocomplete="off" spellcheck="false">
+    </label>
+    <button type="submit">Continue</button>
+  </form>
+  <p class="small muted card-spaced">The server prints the token at its first start, as part of the setup URL and
+     on its own "Token:" line. To see it again, run:</p>
+  <p class="cmd-label">Installed service:</p>
+  <pre class="cmd">sudo webdavgo setup-info</pre>
+  <p class="cmd-label">Container:</p>
+  <pre class="cmd">docker exec &lt;container&gt; webdavgo setup-info</pre>
+  <pre class="cmd">docker logs &lt;container&gt;</pre>
+  <p class="small muted">setup-info issues a new token if the old one expired. In a container it runs inside the
+     running container, and docker logs shows the output of the first start.</p>
+  <p class="warranty">This program comes with ABSOLUTELY NO WARRANTY.</p>
+</div>
+</body>
+</html>{{end}}

@@ -191,8 +191,8 @@ func handleDomainProgress(w http.ResponseWriter, r *http.Request) {
 	renderPage(w, r, "domain-progress", map[string]any{"Job": s})
 }
 
-// handleDomainDone is the finish page: certificate status, the public
-// WebDAV URL and a QR code of it for the iOS app.
+// handleDomainDone is the finish page: certificate status and the public
+// WebDAV URL.
 func handleDomainDone(w http.ResponseWriter, r *http.Request) {
 	c := currentConfig()
 	p := currentCerts()
@@ -200,17 +200,9 @@ func handleDomainDone(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/settings#tls", http.StatusSeeOther)
 		return
 	}
-	url := publicURL(c)
-	qr, err := qrDataURL(url)
-	if err != nil {
-		logger.Error("cannot render server url qr code", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
 	data := certStatusData(p.Status())
 	data["Page"] = "settings"
-	data["URL"] = url
-	data["QR"] = qr
+	data["URL"] = publicURL(c)
 	data["AdminReach"] = adminReach(c.webguiAddr())
 	renderPage(w, r, "finish", data)
 }
