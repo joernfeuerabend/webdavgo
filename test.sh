@@ -329,19 +329,21 @@ else
     check "C104: admin TLS only (http=$C104_STATUS page=$C104_PAGE https=$C104_HTTPS tls12=$C104_TLS12 tls11=$C104_TLS11)" fail
 fi
 
-# ---- C107: setup banner: https URLs with LAN addresses and the fingerprint ---
+# ---- C107: setup block: admin URLs, fingerprint, Token: line and setup links -
 C107_LAN=$(grep -E 'https://([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|\[[0-9a-f:]+\]):8443/setup\?token=[0-9a-f]{64}' "$FIRST_LOG" \
     | grep -vc -e '//127\.' -e '//\[::1\]' || true)
 C107_LOCAL=$(grep -c "https://localhost:8443/setup?token=$TOKEN" "$FIRST_LOG" || true)
 C107_HTTP=$(grep -c 'http://[^ ]*/setup' "$FIRST_LOG" || true)
-C107_FP=$(grep -c "fingerprint: $ADMIN_FP\$" "$FIRST_LOG" || true)
-C107_WARN=$(grep -c 'browser will warn that the certificate is self-signed' "$FIRST_LOG" || true)
+C107_FP=$(grep -cxF "       $ADMIN_FP" "$FIRST_LOG" || true)
+C107_WARN=$(grep -c 'The browser warns that the certificate is self-signed\.' "$FIRST_LOG" || true)
+C107_ADMIN=$(grep -cx '       https://localhost:8443/' "$FIRST_LOG" || true)
+C107_TOKEN_LINE=$(grep -cxF "       Token: $TOKEN" "$FIRST_LOG" || true)
 C107_TOKEN_LOGGED=$(grep "$LOG" "$FIRST_LOG" | grep -c "$TOKEN" || true)
 if [[ "$C107_LAN" -gt 0 && "$C107_LOCAL" == "1" && "$C107_HTTP" == "0" && -n "$ADMIN_FP" && "$C107_FP" == "1" \
-      && "$C107_WARN" == "1" && "$C107_TOKEN_LOGGED" == "0" ]]; then
-    check "C107: setup banner lists https:// URLs for $C107_LAN LAN address(es) and localhost, plus the certificate fingerprint" pass
+      && "$C107_WARN" == "1" && "$C107_ADMIN" == "1" && "$C107_TOKEN_LINE" == "1" && "$C107_TOKEN_LOGGED" == "0" ]]; then
+    check "C107: setup block lists admin URLs ending in /, the certificate fingerprint on its own line, the Token: line and https:// setup links for $C107_LAN LAN address(es) and localhost" pass
 else
-    check "C107: setup banner (lan_urls=$C107_LAN localhost=$C107_LOCAL http_urls=$C107_HTTP fp=$C107_FP warn=$C107_WARN token_in_log=$C107_TOKEN_LOGGED)" fail
+    check "C107: setup block (lan_urls=$C107_LAN localhost=$C107_LOCAL http_urls=$C107_HTTP fp=$C107_FP warn=$C107_WARN admin_url=$C107_ADMIN token_line=$C107_TOKEN_LINE token_in_log=$C107_TOKEN_LOGGED)" fail
 fi
 
 # ---- C108: setup completes only with TOTP; recovery codes shown once ---------
@@ -2678,8 +2680,9 @@ SI_T1=$(token_in "$STDOUT_FILE")
 setup_info >"$TEST_DIR/si1.txt"
 SI_INFO1=$(token_in "$TEST_DIR/si1.txt")
 SI_FP=$(grep -o "$LOGMSG"'"admin certificate" sha256=[0-9A-F:]*' "$STDOUT_FILE" | head -1 | sed 's/.*sha256=//' || true)
-SI_FP_SHOWN=$(grep -c "fingerprint: $SI_FP\$" "$TEST_DIR/si1.txt" || true)
-SI_ADMIN_URL=$(grep -c 'https://localhost:8443/admin/$' "$TEST_DIR/si1.txt" || true)
+SI_FP_SHOWN=$(grep -cxF "       $SI_FP" "$TEST_DIR/si1.txt" || true)
+SI_ADMIN_URL=$(grep -cx '       https://localhost:8443/' "$TEST_DIR/si1.txt" || true)
+SI_TOKEN_LINE=$(grep -cxF "       Token: $SI_T1" "$TEST_DIR/si1.txt" || true)
 stop_server
 start_server
 SI_T2=$(token_in "$STDOUT_FILE")
@@ -2690,11 +2693,11 @@ SI_T3=$(token_in "$TEST_DIR/si2.txt")
 C129_NEW=$(gui -o /dev/null -w '%{http_code}' "$WEBGUI_URL/setup?token=$SI_T3" || true)
 C129_OLD=$(gui -o /dev/null -w '%{http_code}' "$WEBGUI_URL/setup?token=$SI_T1" || true)
 C129_LOGGED=$(grep "$LOG" "$STDOUT_FILE" "$TEST_DIR/si1.txt" "$TEST_DIR/si2.txt" | grep -c -e "$SI_T1" -e "$SI_T3" || true)
-if [[ ${#SI_T1} == 64 && "$SI_INFO1" == "$SI_T1" && "$SI_T2" == "$SI_T1" && "$SI_FP_SHOWN" == "1" && "$SI_ADMIN_URL" == "1" \
+if [[ ${#SI_T1} == 64 && "$SI_INFO1" == "$SI_T1" && "$SI_T2" == "$SI_T1" && "$SI_FP_SHOWN" == "1" && "$SI_ADMIN_URL" == "1" && "$SI_TOKEN_LINE" == "1" \
       && ${#SI_T3} == 64 && "$SI_T3" != "$SI_T1" && "$C129_NEW" == "200" && "$C129_OLD" == "403" && "$C129_LOGGED" == "0" ]]; then
-    check "C129: setup token survives a restart; setup-info prints the same token, admin URL and fingerprint; an expired token is replaced and the running service accepts the new one" pass
+    check "C129: setup token survives a restart; setup-info prints the same token on its Token: line, admin URL and fingerprint; an expired token is replaced and the running service accepts the new one" pass
 else
-    check "C129: setup token (t1=${#SI_T1} info=$([[ "$SI_INFO1" == "$SI_T1" ]] && echo same || echo differs) restart=$([[ "$SI_T2" == "$SI_T1" ]] && echo same || echo differs) fp=$SI_FP_SHOWN admin_url=$SI_ADMIN_URL new=${#SI_T3} new_ok=$C129_NEW old=$C129_OLD in_log=$C129_LOGGED)" fail
+    check "C129: setup token (t1=${#SI_T1} info=$([[ "$SI_INFO1" == "$SI_T1" ]] && echo same || echo differs) restart=$([[ "$SI_T2" == "$SI_T1" ]] && echo same || echo differs) fp=$SI_FP_SHOWN admin_url=$SI_ADMIN_URL token_line=$SI_TOKEN_LINE new=${#SI_T3} new_ok=$C129_NEW old=$C129_OLD in_log=$C129_LOGGED)" fail
 fi
 
 # ---- C130: after setup the token is gone and setup-info says so -------------
@@ -3141,14 +3144,14 @@ EOF
     # ---- C139: finish page and status page show the certificate -------------
     C139_DONE=$(agui "$WEBGUI_URL/admin/domain/done" || true)
     C139_URL=$(echo "$C139_DONE" | grep -c "href=\"https://$ACME_DOMAIN/\">https://$ACME_DOMAIN/</a>" || true)
-    C139_QR=$(echo "$C139_DONE" | grep -c 'class="qr" src="data:image/png;base64,' || true)
+    C139_QR=$(echo "$C139_DONE" | grep -c 'class="qr"' || true)
     C139_ISSUER=$(echo "$C139_DONE" | grep -c '<th>Issuer</th><td>Pebble' || true)
     C139_NEXT=$(echo "$C139_DONE" | grep -cE '<th>Next renewal</th><td>20[0-9]{2}-' || true)
     C139_STATUS=$(agui "$WEBGUI_URL/admin/status" || true)
     C139_ST_N=$(echo "$C139_STATUS" | grep -c -e '<th>Issuer</th><td>Pebble' -e '<th>Next renewal</th><td>20' -e '<th>Last error</th><td>none' || true)
     C139_SRC=$(echo "$C139_STATUS" | grep -cF "<th>domain</th><td><code>$ACME_DOMAIN</code> <span class=\"muted small source\">database (Domain &amp; certificate page)</span>" || true)
-    if [[ "$C139_URL" == "1" && "$C139_QR" == "1" && "$C139_ISSUER" == "1" && "$C139_NEXT" == "1" && "$C139_ST_N" == "3" && "$C139_SRC" == "1" ]]; then
-        check "C139: finish page shows https://$ACME_DOMAIN/ with a QR code, issuer and next renewal; status page shows issuer, next renewal, last error and the domain's source" pass
+    if [[ "$C139_URL" == "1" && "$C139_QR" == "0" && "$C139_ISSUER" == "1" && "$C139_NEXT" == "1" && "$C139_ST_N" == "3" && "$C139_SRC" == "1" ]]; then
+        check "C139: finish page shows https://$ACME_DOMAIN/ without a QR code, issuer and next renewal; status page shows issuer, next renewal, last error and the domain's source" pass
     else
         check "C139: finish/status (url=$C139_URL qr=$C139_QR issuer=$C139_ISSUER next=$C139_NEXT status_rows=$C139_ST_N/3 source=$C139_SRC)" fail
     fi
