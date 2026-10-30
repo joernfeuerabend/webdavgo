@@ -2580,18 +2580,18 @@ mode_of() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
 INST_ROOT="$TEST_DIR/sysroot"
 C125_EXIT=0; "$TEST_DIR/webdavgo" install -root "$INST_ROOT" >"$TEST_DIR/install1.txt" 2>&1 || C125_EXIT=$?
 C125_BIN=$(cmp -s "$TEST_DIR/webdavgo" "$INST_ROOT/usr/local/bin/webdavgo" && test -x "$INST_ROOT/usr/local/bin/webdavgo" && echo same || echo differs)
-C125_MODES="$(mode_of "$INST_ROOT/etc/webdavgo") $(mode_of "$INST_ROOT/var/lib/webdavgo") $(mode_of "$INST_ROOT/etc/webdavgo/config.toml")"
-INST_CFG="$INST_ROOT/etc/webdavgo/config.toml"
+C125_MODES="$(mode_of "$INST_ROOT/etc/webdavgo") $(mode_of "$INST_ROOT/var/lib/webdavgo") $(mode_of "$INST_ROOT/etc/webdavgo/webdavgo.conf")"
+INST_CFG="$INST_ROOT/etc/webdavgo/webdavgo.conf"
 C125_CFG=$(grep -cxF -e 'data_dir = "/var/lib/webdavgo"' -e 'require_tls = true' \
     -e 'access_log = "/var/log/webdavgo/access.log"' -e 'server_log = "/var/log/webdavgo/webdavgo.log"' "$INST_CFG" || true)
-# Only data_dir, require_tls and the two log files are set; tls_mode stays open for the wizard.
-C125_ACTIVE=$(grep -cvE '^(#|$)' "$INST_CFG" || true)
+# Only data_dir, require_tls and the two log files differ from the example; tls_mode stays open for the wizard.
+C125_CHANGED=$(grep -v '^$' "$INST_CFG" | grep -cvxF -f cmd/webdavgo/webdavgo.example.conf || true)
 C125_UNIT_N=0
 for line in 'User=webdavgo' 'Group=webdavgo' 'NoNewPrivileges=yes' 'ProtectSystem=strict' 'ProtectHome=yes' \
     'PrivateTmp=yes' 'PrivateDevices=yes' 'ProtectKernelTunables=yes' 'ProtectKernelModules=yes' 'ProtectKernelLogs=yes' \
     'ProtectControlGroups=yes' 'RestrictNamespaces=yes' 'LockPersonality=yes' 'MemoryDenyWriteExecute=yes' \
     'SystemCallArchitectures=native' 'CapabilityBoundingSet=CAP_NET_BIND_SERVICE' 'AmbientCapabilities=CAP_NET_BIND_SERVICE' \
-    'ReadWritePaths=/var/lib/webdavgo' 'Restart=on-failure' 'ExecStart=/usr/local/bin/webdavgo -config /etc/webdavgo/config.toml' \
+    'ReadWritePaths=/var/lib/webdavgo /etc/webdavgo' 'Restart=on-failure' 'ExecStart=/usr/local/bin/webdavgo -config /etc/webdavgo/webdavgo.conf' \
     'RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK' 'WantedBy=multi-user.target'; do
     grep -qxF "$line" "$INST_ROOT/etc/systemd/system/webdavgo.service" && C125_UNIT_N=$((C125_UNIT_N + 1))
 done
@@ -2604,18 +2604,18 @@ C125_PARSE=$(grep -c "$LOGMSG"'"cannot open database' "$TEST_DIR/inst-parse.txt"
 C125_SYS=0; "$TEST_DIR/webdavgo" install >"$TEST_DIR/install-sys.txt" 2>&1 || C125_SYS=$?
 C125_SYS_MSG=$(grep -c -e 'supports Linux with systemd only' -e 'must run as root' -e 'needs systemd' "$TEST_DIR/install-sys.txt" || true)
 if [[ "$C125_EXIT" == "0" && "$C125_BIN" == "same" && "$C125_MODES" == "750 750 640" && "$C125_CFG" == "4" \
-      && "$C125_ACTIVE" == "4" && "$C125_UNIT_N" == "22" && "$C125_PLAN" == "webdavgo install will:" && "$C125_SKIP" == "2" \
+      && "$C125_CHANGED" == "4" && "$C125_UNIT_N" == "22" && "$C125_PLAN" == "webdavgo install will:" && "$C125_SKIP" == "2" \
       && "$C125_PARSE" == "1" && "$C125_SYS" != "0" && "$C125_SYS_MSG" == "1" ]]; then
     check "C125: install -root: binary, /etc/webdavgo 0750, /var/lib/webdavgo 0750, config 0640 (data_dir, require_tls, access_log, server_log only), hardened unit (22 directives); plan printed first; without -root on this system → refused" pass
 else
-    check "C125: install layout (exit=$C125_EXIT bin=$C125_BIN modes=[$C125_MODES] cfg=$C125_CFG active=$C125_ACTIVE unit=$C125_UNIT_N/22 plan=[$C125_PLAN] skip=$C125_SKIP parse=$C125_PARSE system_exit=$C125_SYS system_msg=$C125_SYS_MSG)" fail
+    check "C125: install layout (exit=$C125_EXIT bin=$C125_BIN modes=[$C125_MODES] cfg=$C125_CFG changed=$C125_CHANGED unit=$C125_UNIT_N/22 plan=[$C125_PLAN] skip=$C125_SKIP parse=$C125_PARSE system_exit=$C125_SYS system_msg=$C125_SYS_MSG)" fail
 fi
 
 # ---- C126: install is idempotent and updates the binary, never the config ----
 echo '# operator edit' >>"$INST_CFG"
 echo 'data' >"$INST_ROOT/var/lib/webdavgo/keep.db"
 C126_EXIT=0; "$TEST_DIR/webdavgo" install -root "$INST_ROOT" >"$TEST_DIR/install2.txt" 2>&1 || C126_EXIT=$?
-C126_KEEP=$(grep -c -e 'keep .*/usr/local/bin/webdavgo (already this binary)' -e 'keep .*/config.toml (an existing config is never overwritten)' \
+C126_KEEP=$(grep -c -e 'keep .*/usr/local/bin/webdavgo (already this binary)' -e 'keep .*/webdavgo.conf (an existing config is never overwritten' \
     -e 'keep .*/webdavgo.service (unchanged)' "$TEST_DIR/install2.txt" || true)
 go build -ldflags "-X main.version=c126" -o "$TEST_DIR/webdavgo-v2" ./cmd/webdavgo
 C126_UPD=0; "$TEST_DIR/webdavgo-v2" install -root "$INST_ROOT" >"$TEST_DIR/install3.txt" 2>&1 || C126_UPD=$?
