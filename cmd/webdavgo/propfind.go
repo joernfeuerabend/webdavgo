@@ -8,6 +8,7 @@ package main
 // ourselves so all standard properties including creationdate are returned.
 
 import (
+	"bytes"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -18,17 +19,10 @@ import (
 	"slices"
 	"strings"
 	"time"
-)
+	"unicode/utf8"
 
-// propfindReq is the request body structure for PROPFIND.
-type propfindReq struct {
-	XMLName  xml.Name  `xml:"propfind"`
-	Allprop  *struct{} `xml:"allprop"`
-	Propname *struct{} `xml:"propname"`
-	Prop     struct {
-		Props []anyElem `xml:",any"`
-	} `xml:"prop"`
-}
+	"golang.org/x/net/html/charset"
+)
 
 // handlePropfind handles WebDAV PROPFIND requests, including the creationdate
 // property not supported by golang.org/x/net/webdav.
@@ -81,7 +75,12 @@ func handlePropfind(w http.ResponseWriter, r *http.Request, dataDir, urlPrefix, 
 		}
 		return
 	}
-	known, unknown, all, namesOnly := parsePropfindProps(body)
+	known, unknown, all, namesOnly, err := parsePropfindProps(body)
+	if err != nil {
+		logger.Debug("PROPFIND body rejected", "path", r.URL.Path, "reason", err)
+		http.Error(w, "invalid PROPFIND body", http.StatusBadRequest)
+		return
+	}
 	// RFC 4918 §9.1: allprop includes the live properties of that document,
 	// and these two are defined there. They stay out of allPropNames because
 	// that list also serves SEARCH.
@@ -245,22 +244,242 @@ func writePropfindEntry(b *strings.Builder, dataDir, absPath string, fi os.FileI
 
 // parsePropfindProps parses the PROPFIND body and returns the known/unknown
 // property split. An empty or allprop body returns all known properties and
-// sets all. A propname body does the same and also sets namesOnly.
-func parsePropfindProps(body []byte) (known, unknown []string, all, namesOnly bool) {
-	if len(body) == 0 {
-		return allPropNames, nil, true, false
+// sets all. A propname body does the same and also sets namesOnly. A body that
+// is not acceptable returns an error, which the caller answers with 400
+// (RFC 4918 §8.2).
+//
+// The body is walked token by token because xml.Unmarshal stops at the end of
+// the root element and skips what it has no field for, so it would miss
+// trailing content and errors inside ignored elements.
+func parsePropfindProps(body []byte) (known, unknown []string, all, namesOnly bool, err error) {
+	text, hasBOM, err := stripPropfindBOM(body)
+	if err != nil {
+		return nil, nil, false, false, err
 	}
-	var pf propfindReq
-	if err := xml.Unmarshal(body, &pf); err != nil {
-		return allPropNames, nil, true, false
+	// RFC 4918 §9.1: an empty body is an allprop request. Whitespace alone
+	// carries no request either, so it is treated the same.
+	if len(bytes.Trim(text, " \t\r\n")) == 0 {
+		return allPropNames, nil, true, false, nil
 	}
-	if pf.Allprop != nil || len(pf.Prop.Props) == 0 {
-		return allPropNames, nil, true, pf.Allprop == nil && pf.Propname != nil
+	newDecoder := func() *xml.Decoder {
+		d := xml.NewDecoder(bytes.NewReader(text))
+		d.CharsetReader = func(label string, input io.Reader) (io.Reader, error) {
+			// The mark decided the encoding and text is already UTF-8, so a
+			// declaration such as encoding="UTF-16" must not decode it again.
+			if hasBOM {
+				return input, nil
+			}
+			data, err := io.ReadAll(input)
+			if err != nil {
+				return nil, fmt.Errorf("read body: %w", err)
+			}
+			decoded, err := decodePropfindCharset(label, data)
+			if err != nil {
+				return nil, err
+			}
+			return bytes.NewReader(decoded), nil
+		}
+		return d
 	}
-	var requested []string
-	for _, p := range pf.Prop.Props {
-		requested = append(requested, p.XMLName.Local)
+	dec := newDecoder()
+	var (
+		depth           int
+		sawRoot         bool
+		form            string
+		sawInclude      bool
+		props, included []string
+		collect         *[]string // receives the children of the current depth 1 element
+	)
+	for {
+		offset := dec.InputOffset()
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, nil, false, false, fmt.Errorf("parse XML: %w", err)
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if err := checkPropfindAttrs(t.Attr); err != nil {
+				return nil, nil, false, false, err
+			}
+			switch depth {
+			case 0:
+				if sawRoot {
+					return nil, nil, false, false, fmt.Errorf("second root element <%s>", t.Name.Local)
+				}
+				if t.Name.Space != "DAV:" || t.Name.Local != "propfind" {
+					return nil, nil, false, false, fmt.Errorf("root element {%s}%s is not {DAV:}propfind", t.Name.Space, t.Name.Local)
+				}
+				sawRoot = true
+			case 1:
+				collect = nil
+				// Anything else is ignored as an extension (RFC 4918 §17).
+				if t.Name.Space != "DAV:" {
+					break
+				}
+				switch t.Name.Local {
+				case "prop", "allprop", "propname":
+					if form != "" {
+						return nil, nil, false, false, fmt.Errorf("<%s> after <%s>", t.Name.Local, form)
+					}
+					form = t.Name.Local
+					if form == "prop" {
+						collect = &props
+					}
+				case "include":
+					if sawInclude {
+						return nil, nil, false, false, fmt.Errorf("second <include>")
+					}
+					sawInclude = true
+					collect = &included
+				}
+			case 2:
+				if collect != nil {
+					*collect = append(*collect, t.Name.Local)
+				}
+			}
+			depth++
+		case xml.EndElement:
+			depth--
+		case xml.CharData:
+			// encoding/xml accepts text outside the root element.
+			if depth == 0 && len(bytes.Trim(t, " \t\r\n")) > 0 {
+				return nil, nil, false, false, fmt.Errorf("text outside the root element")
+			}
+		case xml.ProcInst:
+			// encoding/xml accepts an XML declaration anywhere.
+			if strings.EqualFold(t.Target, "xml") && offset != 0 {
+				return nil, nil, false, false, fmt.Errorf("XML declaration not at the start of the body")
+			}
+		case xml.Directive:
+			if sawRoot || depth > 0 {
+				return nil, nil, false, false, fmt.Errorf("directive after the start of the root element")
+			}
+		}
 	}
-	known, unknown = splitRequested(requested)
-	return known, unknown, false, false
+	if !sawRoot {
+		return nil, nil, false, false, fmt.Errorf("no root element")
+	}
+	if err := checkPropfindPrefixes(newDecoder()); err != nil {
+		return nil, nil, false, false, err
+	}
+	// RFC 4918 §17: element order is irrelevant, so include is only checked
+	// once all siblings are known.
+	if sawInclude && form != "allprop" {
+		return nil, nil, false, false, fmt.Errorf("<include> without <allprop>")
+	}
+	switch form {
+	case "prop":
+		// An empty prop names no properties, so unlike a missing body it is
+		// not allprop. Each response then carries an empty prop with 200 OK,
+		// since RFC 4918 §14.24 requires at least one propstat.
+		known, unknown = splitRequested(props)
+		return known, unknown, false, false, nil
+	case "allprop":
+		// RFC 4918 §9.1: include adds to allprop. Every known property is
+		// already in allprop, so only the others are left to answer.
+		_, unknown = splitRequested(included)
+		return allPropNames, unknown, true, false, nil
+	case "propname":
+		return allPropNames, nil, true, true, nil
+	}
+	return nil, nil, false, false, fmt.Errorf("none of <prop>, <allprop> or <propname> in <propfind>")
+}
+
+// stripPropfindBOM removes a byte order mark and returns the body as UTF-8 if
+// there was one. The mark takes precedence over a declared encoding. Without a
+// mark the body is returned unchanged, since a UTF-16 body cannot be read far
+// enough to find its declaration.
+func stripPropfindBOM(body []byte) (text []byte, hasBOM bool, err error) {
+	switch {
+	case bytes.HasPrefix(body, []byte("\xef\xbb\xbf")):
+		return body[3:], true, nil
+	case bytes.HasPrefix(body, []byte("\xff\xfe")):
+		text, err = decodePropfindCharset("utf-16le", body[2:])
+	case bytes.HasPrefix(body, []byte("\xfe\xff")):
+		text, err = decodePropfindCharset("utf-16be", body[2:])
+	default:
+		return body, false, nil
+	}
+	return text, true, err
+}
+
+// decodePropfindCharset converts data to UTF-8. The decoders replace bytes they
+// cannot decode with U+FFFD instead of failing, so that character counts as
+// undecodable. A genuine U+FFFD in a non-UTF-8 body is rejected with it, which
+// no property name needs.
+func decodePropfindCharset(label string, data []byte) ([]byte, error) {
+	enc, _ := charset.Lookup(label)
+	if enc == nil {
+		return nil, fmt.Errorf("unknown encoding %q", label)
+	}
+	text, err := enc.NewDecoder().Bytes(data)
+	if err != nil {
+		return nil, fmt.Errorf("decode %q: %w", label, err)
+	}
+	if bytes.ContainsRune(text, utf8.RuneError) {
+		return nil, fmt.Errorf("bytes not valid in encoding %q", label)
+	}
+	return text, nil
+}
+
+// checkPropfindPrefixes rejects a prefix that is not in scope where it is used
+// (XML Namespaces 1.0 §5). It needs raw tokens because Token leaves an unknown
+// prefix in Name.Space, where it looks like a namespace of the same name. The
+// caller has already checked that the tags balance.
+func checkPropfindPrefixes(dec *xml.Decoder) error {
+	declared := map[string]int{"xml": 1, "xmlns": 1}
+	var scopes [][]string
+	for {
+		tok, err := dec.RawToken()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("parse XML: %w", err)
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			var scope []string
+			for _, a := range t.Attr {
+				if a.Name.Space == "xmlns" {
+					declared[a.Name.Local]++
+					scope = append(scope, a.Name.Local)
+				}
+			}
+			scopes = append(scopes, scope)
+			if t.Name.Space != "" && declared[t.Name.Space] == 0 {
+				return fmt.Errorf("undeclared namespace prefix %q on element", t.Name.Space)
+			}
+			for _, a := range t.Attr {
+				if a.Name.Space != "" && declared[a.Name.Space] == 0 {
+					return fmt.Errorf("undeclared namespace prefix %q on attribute", a.Name.Space)
+				}
+			}
+		case xml.EndElement:
+			for _, prefix := range scopes[len(scopes)-1] {
+				declared[prefix]--
+			}
+			scopes = scopes[:len(scopes)-1]
+		}
+	}
+}
+
+// checkPropfindAttrs rejects what encoding/xml lets pass in a start tag: a
+// prefix bound to the empty string, which XML Namespaces 1.0 §3 forbids, and a
+// repeated attribute, which XML 1.0 §3.1 and Namespaces 1.0 §6.3 forbid.
+func checkPropfindAttrs(attrs []xml.Attr) error {
+	seen := make(map[xml.Name]bool, len(attrs))
+	for _, a := range attrs {
+		if a.Name.Space == "xmlns" && a.Value == "" {
+			return fmt.Errorf("namespace prefix %q bound to the empty string", a.Name.Local)
+		}
+		if seen[a.Name] {
+			return fmt.Errorf("repeated attribute %q", a.Name.Local)
+		}
+		seen[a.Name] = true
+	}
+	return nil
 }

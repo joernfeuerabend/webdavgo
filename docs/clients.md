@@ -119,6 +119,35 @@ the owner's remaining quota. `quota-used-bytes` is answered as not found
 (404 propstat), since the owner's total usage is no business of the
 recipient.
 
+## PROPFIND request bodies
+
+The same rules apply on the user endpoint and on shares.
+
+| Body | Answer |
+|------|--------|
+| empty or only whitespace | 207, as `allprop` (RFC 4918 §9.1) |
+| `prop` | 207 with the named properties |
+| empty `prop` | 207, each response carries an empty `prop` with 200 OK |
+| `allprop` | 207 with all properties except the quota properties |
+| `allprop` and `include`, in either order | 207 with `allprop` and the included properties, for example the quota properties |
+| `propname` | 207 with property names only |
+| not well-formed XML, including content after the root element | 400 (RFC 4918 §8.2) |
+| a namespace prefix bound to the empty string (`xmlns:bar=""`), or an undeclared prefix on an element or attribute name | 400 |
+| an encoding that is unknown, or bytes that are not valid in it | 400 |
+| root element other than `DAV:propfind` | 400 |
+| none or several of `prop`, `allprop`, `propname`, or `include` without `allprop` | 400 |
+
+Other elements, in `DAV:` or any other namespace, are ignored (RFC 4918 §17). A
+400 has no XML body, and the reason is logged at Debug.
+
+Besides UTF-8, a body can be UTF-16 with a byte order mark, or use any encoding
+named in its XML declaration that `golang.org/x/net/html/charset` knows, for
+example `ISO-8859-1`. A byte order mark takes precedence over the declaration.
+
+An included property the server does not have is answered in a 404 propstat, the
+same as one named in `prop`. A refused `Depth: infinity` (403) and a missing
+resource (404) take precedence over a 400 for the body.
+
 ## PROPFIND with propname
 
 `propname` returns the names of the properties a resource has, without values
