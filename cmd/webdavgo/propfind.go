@@ -199,6 +199,14 @@ func writePropfindEntry(b *strings.Builder, dataDir, absPath string, fi os.FileI
 			}
 		}
 		b.WriteString("<d:supportedlock/><d:lockdiscovery/>")
+		// RFC 4331 §2: propname must list the quota properties, unlike
+		// allprop. Only collections have them, and a share has no used bytes.
+		if fi.IsDir() {
+			b.WriteString("<d:quota-available-bytes/>")
+			if urlPrefix == "" {
+				b.WriteString("<d:quota-used-bytes/>")
+			}
+		}
 		b.WriteString("</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>")
 		return
 	}

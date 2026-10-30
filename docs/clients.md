@@ -122,8 +122,9 @@ recipient.
 ## PROPFIND with propname
 
 `propname` returns the names of the properties a resource has, without values
-(RFC 4918 §9.1), on the user endpoint and on shares. The RFC 4331 quota
-properties are not listed, as they are not part of `allprop` either.
+(RFC 4918 §9.1), on the user endpoint and on shares. On a collection this
+includes `quota-available-bytes` and, except on shares, `quota-used-bytes`
+(RFC 4331 §2), although `allprop` leaves them out.
 
 ## Locks
 
