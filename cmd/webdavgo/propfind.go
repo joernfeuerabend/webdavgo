@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
 // propfindReq is the request body structure for PROPFIND.
@@ -34,8 +35,9 @@ type propfindReq struct {
 // urlPrefix is prepended to every href in the multistatus response; pass ""
 // for the normal user endpoint and "/s/{share_id}" for the share endpoint.
 // owner is the user whose quota the RFC 4331 properties report; a share
-// reports only quota-available-bytes.
-func handlePropfind(w http.ResponseWriter, r *http.Request, dataDir, urlPrefix, owner string) {
+// reports only quota-available-bytes. locks is the user's lock state, nil on
+// a share, which must not expose the owner's locks to a recipient.
+func handlePropfind(w http.ResponseWriter, r *http.Request, dataDir, urlPrefix, owner string, locks *lockTracker) {
 	// RFC 4918 §10.2: a missing Depth header means infinity.
 	depth := strings.ToLower(strings.TrimSpace(r.Header.Get("Depth")))
 	if depth == "" {
@@ -79,7 +81,22 @@ func handlePropfind(w http.ResponseWriter, r *http.Request, dataDir, urlPrefix, 
 		}
 		return
 	}
-	known, unknown := parsePropfindProps(body)
+	known, unknown, all := parsePropfindProps(body)
+	// RFC 4918 §9.1: allprop includes the live properties of that document,
+	// and these two are defined there. They stay out of allPropNames because
+	// that list also serves SEARCH.
+	l := lockProps{locks: locks, now: time.Now(), supported: all, discovery: all}
+	unknown = slices.DeleteFunc(unknown, func(name string) bool {
+		switch name {
+		case "supportedlock":
+			l.supported = true
+		case "lockdiscovery":
+			l.discovery = true
+		default:
+			return false
+		}
+		return true
+	})
 	q := quotaProps{}
 	// On a share, quota-used-bytes stays unknown (404): it is the owner's
 	// account-wide usage, which is none of the recipient's business. The
@@ -103,9 +120,9 @@ func handlePropfind(w http.ResponseWriter, r *http.Request, dataDir, urlPrefix, 
 
 	switch depth {
 	case "0":
-		writePropfindEntry(&out, dataDir, absPath, fi, known, unknown, urlPrefix, q)
+		writePropfindEntry(&out, dataDir, absPath, fi, known, unknown, urlPrefix, q, l)
 	case "1":
-		writePropfindEntry(&out, dataDir, absPath, fi, known, unknown, urlPrefix, q)
+		writePropfindEntry(&out, dataDir, absPath, fi, known, unknown, urlPrefix, q, l)
 		if fi.IsDir() {
 			entries, _ := os.ReadDir(absPath)
 			for _, entry := range entries {
@@ -117,7 +134,7 @@ func handlePropfind(w http.ResponseWriter, r *http.Request, dataDir, urlPrefix, 
 				if err != nil {
 					continue
 				}
-				writePropfindEntry(&out, dataDir, childPath, childFI, known, unknown, urlPrefix, q)
+				writePropfindEntry(&out, dataDir, childPath, childFI, known, unknown, urlPrefix, q, l)
 			}
 		}
 	default: // infinity
@@ -128,7 +145,7 @@ func handlePropfind(w http.ResponseWriter, r *http.Request, dataDir, urlPrefix, 
 			if strings.HasPrefix(wfi.Name(), tmpPrefix) {
 				return nil
 			}
-			writePropfindEntry(&out, dataDir, walkPath, wfi, known, unknown, urlPrefix, q)
+			writePropfindEntry(&out, dataDir, walkPath, wfi, known, unknown, urlPrefix, q, l)
 			return nil
 		})
 	}
@@ -157,31 +174,48 @@ type quotaProps struct {
 	available, used int64
 }
 
-func writePropfindEntry(b *strings.Builder, dataDir, absPath string, fi os.FileInfo, known, unknown []string, urlPrefix string, q quotaProps) {
+// lockProps holds which lock properties a PROPFIND asked for and the state to
+// answer them from. locks is nil on a share, where both properties are empty.
+type lockProps struct {
+	supported, discovery bool
+	locks                *lockTracker
+	now                  time.Time
+}
+
+func writePropfindEntry(b *strings.Builder, dataDir, absPath string, fi os.FileInfo, known, unknown []string, urlPrefix string, q quotaProps, l lockProps) {
 	fp := buildFileProps(dataDir, absPath, fi)
+	// The lock name is relative to the user root, so taken before the prefix.
+	lockName := fp.Href
 	if urlPrefix != "" {
 		fp.Href = urlPrefix + fp.Href
 	}
-	if len(q.names) == 0 {
-		writeFileResponse(b, fp, known, unknown)
-		return
-	}
-	// RFC 4331 §3, §4 define the properties for collections; a file reports
+	// RFC 4331 §3, §4 define the properties for collections. A file reports
 	// them as not found.
-	if !fi.IsDir() {
-		writeFileResponse(b, fp, known, append(slices.Clone(unknown), q.names...))
-		return
+	if !fi.IsDir() && len(q.names) > 0 {
+		unknown = append(slices.Clone(unknown), q.names...)
 	}
 	b.WriteString("<d:response><d:href>" + hrefXML(fp.Href) + "</d:href><d:propstat><d:prop>")
 	for _, name := range known {
 		writePropElem(b, name, fp)
 	}
-	for _, name := range q.names {
-		v := q.available
-		if name == "quota-used-bytes" {
-			v = q.used
+	if fi.IsDir() {
+		for _, name := range q.names {
+			v := q.available
+			if name == "quota-used-bytes" {
+				v = q.used
+			}
+			fmt.Fprintf(b, "<d:%s>%d</d:%s>", name, v, name)
 		}
-		fmt.Fprintf(b, "<d:%s>%d</d:%s>", name, v, name)
+	}
+	if l.supported {
+		writeSupportedLock(b, l.locks == nil)
+	}
+	if l.discovery {
+		var active []activeLock
+		if l.locks != nil {
+			active = l.locks.locksOn(l.now, lockName)
+		}
+		writeLockDiscovery(b, active, l.now)
 	}
 	b.WriteString("</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>")
 	writePropstatNotFound(b, unknown)
@@ -189,21 +223,23 @@ func writePropfindEntry(b *strings.Builder, dataDir, absPath string, fi os.FileI
 }
 
 // parsePropfindProps parses the PROPFIND body and returns the known/unknown
-// property split. An empty or allprop body returns all known properties.
-func parsePropfindProps(body []byte) (known, unknown []string) {
+// property split. An empty or allprop body returns all known properties and
+// sets all.
+func parsePropfindProps(body []byte) (known, unknown []string, all bool) {
 	if len(body) == 0 {
-		return allPropNames, nil
+		return allPropNames, nil, true
 	}
 	var pf propfindReq
 	if err := xml.Unmarshal(body, &pf); err != nil {
-		return allPropNames, nil
+		return allPropNames, nil, true
 	}
 	if pf.Allprop != nil || len(pf.Prop.Props) == 0 {
-		return allPropNames, nil
+		return allPropNames, nil, true
 	}
 	var requested []string
 	for _, p := range pf.Prop.Props {
 		requested = append(requested, p.XMLName.Local)
 	}
-	return splitRequested(requested)
+	known, unknown = splitRequested(requested)
+	return known, unknown, false
 }
