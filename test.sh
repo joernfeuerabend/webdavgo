@@ -2580,8 +2580,8 @@ mode_of() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
 INST_ROOT="$TEST_DIR/sysroot"
 C125_EXIT=0; "$TEST_DIR/webdavgo" install -root "$INST_ROOT" >"$TEST_DIR/install1.txt" 2>&1 || C125_EXIT=$?
 C125_BIN=$(cmp -s "$TEST_DIR/webdavgo" "$INST_ROOT/usr/local/bin/webdavgo" && test -x "$INST_ROOT/usr/local/bin/webdavgo" && echo same || echo differs)
-C125_MODES="$(mode_of "$INST_ROOT/etc/webdavgo") $(mode_of "$INST_ROOT/var/lib/webdavgo") $(mode_of "$INST_ROOT/etc/webdavgo/config.toml")"
-INST_CFG="$INST_ROOT/etc/webdavgo/config.toml"
+C125_MODES="$(mode_of "$INST_ROOT/etc/webdavgo") $(mode_of "$INST_ROOT/var/lib/webdavgo") $(mode_of "$INST_ROOT/etc/webdavgo/webdavgo.conf")"
+INST_CFG="$INST_ROOT/etc/webdavgo/webdavgo.conf"
 C125_CFG=$(grep -cxF -e 'data_dir = "/var/lib/webdavgo"' -e 'require_tls = true' \
     -e 'access_log = "/var/log/webdavgo/access.log"' -e 'server_log = "/var/log/webdavgo/webdavgo.log"' "$INST_CFG" || true)
 # Only data_dir, require_tls and the two log files are set; tls_mode stays open for the wizard.
@@ -2591,7 +2591,7 @@ for line in 'User=webdavgo' 'Group=webdavgo' 'NoNewPrivileges=yes' 'ProtectSyste
     'PrivateTmp=yes' 'PrivateDevices=yes' 'ProtectKernelTunables=yes' 'ProtectKernelModules=yes' 'ProtectKernelLogs=yes' \
     'ProtectControlGroups=yes' 'RestrictNamespaces=yes' 'LockPersonality=yes' 'MemoryDenyWriteExecute=yes' \
     'SystemCallArchitectures=native' 'CapabilityBoundingSet=CAP_NET_BIND_SERVICE' 'AmbientCapabilities=CAP_NET_BIND_SERVICE' \
-    'ReadWritePaths=/var/lib/webdavgo' 'Restart=on-failure' 'ExecStart=/usr/local/bin/webdavgo -config /etc/webdavgo/config.toml' \
+    'ReadWritePaths=/var/lib/webdavgo /etc/webdavgo' 'Restart=on-failure' 'ExecStart=/usr/local/bin/webdavgo -config /etc/webdavgo/webdavgo.conf' \
     'RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK' 'WantedBy=multi-user.target'; do
     grep -qxF "$line" "$INST_ROOT/etc/systemd/system/webdavgo.service" && C125_UNIT_N=$((C125_UNIT_N + 1))
 done
