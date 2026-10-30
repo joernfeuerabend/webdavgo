@@ -157,17 +157,58 @@ includes `quota-available-bytes` and, except on shares, `quota-used-bytes`
 
 ## Locks
 
-The user endpoint is DAV class 2 and accepts exclusive write locks. PROPFIND
-returns `DAV:supportedlock` and `DAV:lockdiscovery` (RFC 4918 §15), by name
-and in `allprop`. They are not part of SEARCH responses. `lockdiscovery` lists
-the locks that apply to the resource, including one inherited from an ancestor
-locked with Depth infinity, with the remaining timeout. Lock state lives in
-memory and is lost on restart. For locks and shares, see
-[Shares](shares.md#locks).
+The user endpoint is DAV class 2 and accepts exclusive and shared write locks
+with Depth 0 or infinity (RFC 4918 §6, §9.10). Lock state lives in memory and is
+lost on restart. For locks and shares, see [Shares](shares.md#locks).
 
-An owner element whose prefixes were declared outside of it in the LOCK request
-(`<D:owner><D:href>`) is returned with those prefixes bound to `DAV:`, since the
-original binding is not kept.
+**Creating a lock.** LOCK answers with a `Lock-Token` header holding a random
+`urn:uuid` token and `DAV:lockdiscovery` in the body. An unmapped URL becomes an
+empty resource (201), a missing parent gives 409. Without a `Timeout` header a
+lock does not expire. A list of timeouts uses the first value understood, and
+values above `Second-4294967295` are ignored. A LOCK without a body refreshes the
+locks on the resource whose tokens are in a true list of the `If` header.
+
+| LOCK result | Status |
+|-------------|--------|
+| conflict on the resource or an ancestor | 423 with `no-conflicting-lock` |
+| Depth infinity with a conflicting lock on a member | 207: the member with 423, the request URI with 424 |
+| a write is running on what the lock would cover | 503 with `Retry-After: 1`, without waiting |
+
+A Depth 0 lock on a collection covers its properties and membership only (§7.4).
+So of the writes below it, only one that adds, removes or renames a direct member
+gets it 503, and overwriting a member does not.
+
+**The `If` header** is evaluated as in RFC 4918 §10.4 on every method except
+OPTIONS, SEARCH and UNLOCK: tagged and untagged lists, `Not`, state tokens and
+entity tags with strong comparison. A tagged list applies only to its tagged
+resource. A malformed header gives 400, and a header without a true list gives
+412.
+
+**Writes to locked resources.** PUT, DELETE, MKCOL, PROPPATCH, MOVE (source and
+destination) and COPY (destination) need the token of a lock on the resource in a
+true list, otherwise 423 with `lock-token-submitted`. With several shared locks on
+a resource, one token is enough. A lock on a collection, of any depth, also
+protects its list of members (§7.4), so adding or removing a member needs its
+token, while overwriting a member does not. Replacing or removing a collection
+with locked members needs their tokens as well: otherwise nothing changes and the
+answer is 207, listing each locked member with 423. An `If` header that is true
+without such a token still gives 423, which is what the litmus test
+`cond_put_corrupt_token` expects.
+
+**Locks and removed resources.** Locks at and below a resource that a successful
+DELETE or MOVE removed, or that a COPY or MOVE overwrote, are gone. They do not
+move with the resource. A moved or copied resource falls under a Depth infinity
+lock of its new parent.
+
+**Concurrent requests.** One token can be used by parallel requests. Writes to the
+same path wait for each other instead of failing, on the user endpoint and on
+shares together, so 423 always means a lock created by LOCK.
+
+**Properties.** PROPFIND returns `DAV:supportedlock` and `DAV:lockdiscovery`
+(RFC 4918 §15), by name and in `allprop`. They are not part of SEARCH responses.
+`lockdiscovery` lists all locks that apply to the resource, including those
+inherited from an ancestor locked with Depth infinity, with the remaining
+timeout. The owner element keeps the namespaces it had in the LOCK request.
 
 ## SEARCH ordering and limits
 

@@ -184,7 +184,7 @@ func serveShare(w http.ResponseWriter, r *http.Request, share *Share, shareRoot 
 		h := &webdav.Handler{
 			Prefix:     sharePrefix,
 			FileSystem: davFS{webdav.Dir(shareRoot)},
-			LockSystem: shareLocks{owner: userLocks(share.OwnerUsername).temporary(), root: share.Path},
+			LockSystem: noLockSystem{},
 			Logger: func(req *http.Request, err error) {
 				if err != nil {
 					status := davStatus(req)

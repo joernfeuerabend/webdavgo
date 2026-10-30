@@ -10,7 +10,8 @@ package main
 // with O_TRUNC. Sync clients need both: a precondition that is evaluated
 // atomically with the write, and a write that is never observed half-done.
 // Everything here wraps x/net instead of replacing its PUT/DELETE handling,
-// so LOCK confirmation and status codes stay exactly as x/net produces them.
+// so status codes stay exactly as x/net produces them. Lock decisions are made
+// here and in locks.go before x/net runs.
 
 import (
 	"context"
@@ -24,6 +25,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -70,10 +72,10 @@ func requestTouchesReserved(r *http.Request) bool {
 
 // ---- per-path locking -------------------------------------------------------
 
-// pathLocks serialises PUT and DELETE per absolute filesystem path. The user
-// and the share endpoint can reach the same file, so the key must be the
-// resolved path, not the URL. Entries are reference-counted and removed when
-// idle so the map does not grow with every path ever written.
+// pathLocks serialises writes per absolute filesystem path. The user and the
+// share endpoint can reach the same file, so the key must be the resolved path,
+// not the URL. Entries are reference-counted and removed when idle so the map
+// does not grow with every path ever written.
 var pathLocks = struct {
 	mu sync.Mutex
 	m  map[string]*pathLock
@@ -105,6 +107,24 @@ func lockPath(absPath string) func() {
 			delete(pathLocks.m, absPath)
 		}
 		pathLocks.mu.Unlock()
+	}
+}
+
+// lockPaths holds the path locks of several keys. They are taken in sorted order
+// so that two requests naming the same paths cannot deadlock, and a key named
+// twice (MOVE onto itself) is taken once.
+func lockPaths(keys ...string) func() {
+	sorted := slices.Clone(keys)
+	slices.Sort(sorted)
+	sorted = slices.Compact(sorted)
+	unlocks := make([]func(), len(sorted))
+	for i, key := range sorted {
+		unlocks[i] = lockPath(key)
+	}
+	return func() {
+		for i := len(unlocks) - 1; i >= 0; i-- {
+			unlocks[i]()
+		}
 	}
 }
 
@@ -257,23 +277,56 @@ func davErrorLevel(status int, err error) slog.Level {
 	return slog.LevelDebug
 }
 
-// serveDAV hands a request to x/net/webdav. For PUT and DELETE it first takes
-// the per-path lock and evaluates the preconditions, and keeps the lock until
-// x/net has finished, so check and write are atomic against other writers.
-// absPath is the filesystem path the request URL resolves to; owner is the
-// user whose quota the request is charged to.
+// serveDAV hands a request to x/net/webdav. A write first takes the per-path
+// lock, evaluates the preconditions and passes the lock check, and keeps the
+// path lock until x/net has finished, so check and write are atomic against
+// other writers. absPath is the filesystem path the request URL resolves to.
+// owner is the user whose quota the request is charged to and whose locks apply.
 func serveDAV(w http.ResponseWriter, r *http.Request, h *webdav.Handler, absPath, owner string) {
-	if sr, ok := w.(*statusRecorder); ok {
-		r = r.WithContext(context.WithValue(r.Context(), davStatusKey{}, sr))
+	sr, recorded := w.(*statusRecorder)
+	if !recorded {
+		sr = &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		w = sr
 	}
+	r = r.WithContext(context.WithValue(r.Context(), davStatusKey{}, sr))
+	locks := userLocks(owner)
+	// Only the user handler is rooted at "/", a share at its /s/ prefix.
+	isShare := h.Prefix != "/"
+	name := locks.nameOf(absPath)
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodPost:
+		// A share accepts no lock tokens, and an If header on a read never
+		// mattered there.
+		if !isShare && !locks.checkRead(w, r, name) {
+			return
+		}
 		// x/net answers POST like GET, with the file's content.
 		setContentHeaders(w.Header(), absPath)
 		h.ServeHTTP(w, r)
 		return
+	case "LOCK":
+		serveLock(w, r, locks, absPath)
+		return
+	case "UNLOCK":
+		serveUnlock(w, r, locks, absPath)
+		return
 	case "COPY", "MOVE":
 		serveCopyMove(w, r, h, absPath, owner)
+		return
+	case "MKCOL", "PROPPATCH":
+		key, err := filepath.Abs(absPath)
+		if err != nil {
+			logger.Error("cannot resolve absolute path", "path", absPath, "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		defer lockPaths(key)()
+		done, ok := locks.admitWrite(w, r, isShare, name, []writeTarget{{name: name, member: r.Method == "MKCOL" && !pathExists(key)}})
+		if !ok {
+			return
+		}
+		defer done()
+		h.ServeHTTP(w, r)
 		return
 	case http.MethodPut, http.MethodDelete:
 	default:
@@ -306,13 +359,28 @@ func serveDAV(w http.ResponseWriter, r *http.Request, h *webdav.Handler, absPath
 	}
 
 	if r.Method == http.MethodDelete {
+		done, ok := locks.admitWrite(w, r, isShare, name, []writeTarget{{name: name, member: true, replaces: true, tree: true}})
+		if !ok {
+			return
+		}
+		var removed []string
+		defer func() { done(removed...) }()
 		before := treeSize(key)
 		h.ServeHTTP(w, r)
 		// Measured rather than derived from the status: a failed recursive
 		// delete may still have removed part of the tree.
 		settleQuota(owner, 0, treeSize(key)-before)
+		if sr.status == http.StatusNoContent {
+			removed = []string{name}
+		}
 		return
 	}
+
+	done, ok := locks.admitWrite(w, r, isShare, name, []writeTarget{{name: name, member: !pathExists(key)}})
+	if !ok {
+		return
+	}
+	defer done()
 
 	// A declared body is checked before any of it is read; a chunked one is
 	// checked chunk by chunk in atomicFile.Write. Only the growth counts, so
@@ -442,19 +510,51 @@ func (q *quotaWriter) Unwrap() http.ResponseWriter {
 // overwritten destination held, the moved bytes stay with the same owner.
 // Only COPY can grow usage, so only COPY is checked against the quota; a user
 // over quota can still move.
+//
+// RFC 4918 §7.5: COPY needs no token for its source, only MOVE removes it. A
+// COPY or MOVE over an existing destination deletes it first (§9.8.4, §9.9.3),
+// so the locks there go with it. A moved resource keeps no lock, and the lock
+// of a new parent applies by its name alone.
 func serveCopyMove(w http.ResponseWriter, r *http.Request, h *webdav.Handler, absPath, owner string) {
 	dst := davDestination(r, h)
 	if dst == "" {
 		// x/net rejects the request; nothing is written.
+		r.Header.Del("If")
 		h.ServeHTTP(w, r)
 		return
 	}
+	srcKey, err := filepath.Abs(absPath)
+	dstKey, dstErr := filepath.Abs(dst)
+	if err != nil || dstErr != nil {
+		logger.Error("cannot resolve absolute path", "path", absPath, "destination", dst, "err", errors.Join(err, dstErr))
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	locks := userLocks(owner)
+	isShare := h.Prefix != "/"
+	srcName, dstName := locks.nameOf(absPath), locks.nameOf(dst)
+	var targets []writeTarget
+	if r.Method == "MOVE" {
+		defer lockPaths(srcKey, dstKey)()
+		targets = append(targets, writeTarget{name: srcName, member: true, replaces: true, tree: true})
+	} else {
+		defer lockPaths(dstKey)()
+	}
+	dstExists := pathExists(dstKey)
+	targets = append(targets, writeTarget{name: dstName, member: !dstExists, replaces: dstExists, tree: true})
+	done, ok := locks.admitWrite(w, r, isShare, srcName, targets)
+	if !ok {
+		return
+	}
+	var removed []string
+	defer func() { done(removed...) }()
 	dstBefore := treeSize(dst)
 
 	if r.Method == "MOVE" {
 		h.ServeHTTP(w, r)
 		if s := davStatus(r); s == http.StatusCreated || s == http.StatusNoContent {
 			settleQuota(owner, 0, -dstBefore)
+			removed = []string{srcName, dstName}
 		}
 		return
 	}
@@ -473,6 +573,16 @@ func serveCopyMove(w http.ResponseWriter, r *http.Request, h *webdav.Handler, ab
 	}
 	h.ServeHTTP(w, r)
 	settleQuota(owner, reserved, treeSize(dst)-dstBefore)
+	if s := davStatus(r); s == http.StatusCreated || s == http.StatusNoContent {
+		removed = []string{dstName}
+	}
+}
+
+// pathExists reports whether something is at absPath. An error other than a
+// missing file counts as existing, which asks for the stricter lock check.
+func pathExists(absPath string) bool {
+	_, err := os.Stat(absPath)
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 // davDestination resolves the Destination header of a COPY or MOVE to a
