@@ -31,13 +31,19 @@ import (
 // file before the process exits.
 const forcedCloseGrace = 5 * time.Second
 
-var davHandlers sync.Map // username -> *webdav.Handler
+var davHandlers sync.Map // username -> *davUser
 
-func getDavHandler(username string) *webdav.Handler {
+// davUser is the WebDAV state of one user.
+type davUser struct {
+	handler *webdav.Handler
+	locks   *lockManager
+}
+
+func getDavUser(username string) *davUser {
 	h := &webdav.Handler{
 		Prefix:     "/",
 		FileSystem: davFS{webdav.Dir(userDataRoot(username))},
-		LockSystem: newLockTracker(webdav.NewMemLS()),
+		LockSystem: noLockSystem{},
 		Logger: func(r *http.Request, err error) {
 			if err == nil {
 				return
@@ -47,27 +53,15 @@ func getDavHandler(username string) *webdav.Handler {
 				"client", remoteIP(r), "method", r.Method, "path", r.URL.Path, "status", status, "err", err)
 		},
 	}
-	actual, _ := davHandlers.LoadOrStore(username, h)
-	return actual.(*webdav.Handler)
+	actual, _ := davHandlers.LoadOrStore(username, &davUser{handler: h, locks: newLockManager(userDataRoot(username))})
+	return actual.(*davUser)
 }
 
 // userLocks returns the lock state of username, shared by the user endpoint
 // and the user's shares. It lives as long as the user's handler: until the
 // user is deleted or the process ends.
-func userLocks(username string) *lockTracker {
-	return getDavHandler(username).LockSystem.(*lockTracker)
-}
-
-// davHandlerFor returns the user's handler for one request. Only LOCK and
-// UNLOCK change recorded lock state, see lockTracker.temporary.
-func davHandlerFor(username, method string) *webdav.Handler {
-	h := getDavHandler(username)
-	if method == "LOCK" || method == "UNLOCK" {
-		return h
-	}
-	perRequest := *h
-	perRequest.LockSystem = userLocks(username).temporary()
-	return &perRequest
+func userLocks(username string) *lockManager {
+	return getDavUser(username).locks
 }
 
 // adminFingerprint is the SHA-256 fingerprint of the self-signed admin
@@ -632,7 +626,7 @@ func buildWebDAVHandler() http.Handler {
 			handlePropfind(rw, r, root, "", username, userLocks(username))
 		default:
 			absPath := filepath.Join(root, filepath.FromSlash(path.Clean("/"+r.URL.Path)))
-			serveDAV(rw, r, davHandlerFor(username, r.Method), absPath, username)
+			serveDAV(rw, r, getDavUser(username).handler, absPath, username)
 		}
 	})
 }

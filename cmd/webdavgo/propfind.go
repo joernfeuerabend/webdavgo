@@ -31,7 +31,10 @@ import (
 // owner is the user whose quota the RFC 4331 properties report; a share
 // reports only quota-available-bytes. locks is the user's lock state, nil on
 // a share, which must not expose the owner's locks to a recipient.
-func handlePropfind(w http.ResponseWriter, r *http.Request, dataDir, urlPrefix, owner string, locks *lockTracker) {
+func handlePropfind(w http.ResponseWriter, r *http.Request, dataDir, urlPrefix, owner string, locks *lockManager) {
+	if locks != nil && !locks.checkRead(w, r, path.Clean("/"+r.URL.Path)) {
+		return
+	}
 	// RFC 4918 §10.2: a missing Depth header means infinity.
 	depth := strings.ToLower(strings.TrimSpace(r.Header.Get("Depth")))
 	if depth == "" {
@@ -177,7 +180,7 @@ type quotaProps struct {
 // answer them from. locks is nil on a share, where both properties are empty.
 type lockProps struct {
 	supported, discovery bool
-	locks                *lockTracker
+	locks                *lockManager
 	now                  time.Time
 }
 
@@ -261,27 +264,7 @@ func parsePropfindProps(body []byte) (known, unknown []string, all, namesOnly bo
 	if len(bytes.Trim(text, " \t\r\n")) == 0 {
 		return allPropNames, nil, true, false, nil
 	}
-	newDecoder := func() *xml.Decoder {
-		d := xml.NewDecoder(bytes.NewReader(text))
-		d.CharsetReader = func(label string, input io.Reader) (io.Reader, error) {
-			// The mark decided the encoding and text is already UTF-8, so a
-			// declaration such as encoding="UTF-16" must not decode it again.
-			if hasBOM {
-				return input, nil
-			}
-			data, err := io.ReadAll(input)
-			if err != nil {
-				return nil, fmt.Errorf("read body: %w", err)
-			}
-			decoded, err := decodePropfindCharset(label, data)
-			if err != nil {
-				return nil, err
-			}
-			return bytes.NewReader(decoded), nil
-		}
-		return d
-	}
-	dec := newDecoder()
+	dec := newXMLBodyDecoder(text, hasBOM)
 	var (
 		depth           int
 		sawRoot         bool
@@ -362,7 +345,7 @@ func parsePropfindProps(body []byte) (known, unknown []string, all, namesOnly bo
 	if !sawRoot {
 		return nil, nil, false, false, fmt.Errorf("no root element")
 	}
-	if err := checkPropfindPrefixes(newDecoder()); err != nil {
+	if err := checkPropfindPrefixes(newXMLBodyDecoder(text, hasBOM)); err != nil {
 		return nil, nil, false, false, err
 	}
 	// RFC 4918 §17: element order is irrelevant, so include is only checked
@@ -386,6 +369,29 @@ func parsePropfindProps(body []byte) (known, unknown []string, all, namesOnly bo
 		return allPropNames, nil, true, true, nil
 	}
 	return nil, nil, false, false, fmt.Errorf("none of <prop>, <allprop> or <propname> in <propfind>")
+}
+
+// newXMLBodyDecoder returns a decoder for a request body that went through
+// stripPropfindBOM.
+func newXMLBodyDecoder(text []byte, hasBOM bool) *xml.Decoder {
+	d := xml.NewDecoder(bytes.NewReader(text))
+	d.CharsetReader = func(label string, input io.Reader) (io.Reader, error) {
+		// The mark decided the encoding and text is already UTF-8, so a
+		// declaration such as encoding="UTF-16" must not decode it again.
+		if hasBOM {
+			return input, nil
+		}
+		data, err := io.ReadAll(input)
+		if err != nil {
+			return nil, fmt.Errorf("read body: %w", err)
+		}
+		decoded, err := decodePropfindCharset(label, data)
+		if err != nil {
+			return nil, err
+		}
+		return bytes.NewReader(decoded), nil
+	}
+	return d
 }
 
 // stripPropfindBOM removes a byte order mark and returns the body as UTF-8 if
