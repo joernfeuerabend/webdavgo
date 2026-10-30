@@ -172,7 +172,11 @@ locks on the resource whose tokens are in a true list of the `If` header.
 |-------------|--------|
 | conflict on the resource or an ancestor | 423 with `no-conflicting-lock` |
 | Depth infinity with a conflicting lock on a member | 207: the member with 423, the request URI with 424 |
-| a write is running on the resource | 503 with `Retry-After: 1`, without waiting |
+| a write is running on what the lock would cover | 503 with `Retry-After: 1`, without waiting |
+
+A Depth 0 lock on a collection covers its properties and membership only (§7.4).
+So of the writes below it, only one that adds, removes or renames a direct member
+gets it 503, and overwriting a member does not.
 
 **The `If` header** is evaluated as in RFC 4918 §10.4 on every method except
 OPTIONS, SEARCH and UNLOCK: tagged and untagged lists, `Not`, state tokens and

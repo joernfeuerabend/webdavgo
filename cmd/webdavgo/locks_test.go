@@ -1144,7 +1144,8 @@ func TestLockDuringWriteRefusedAtOnce(t *testing.T) {
 	}{
 		{"same resource", "/shared/free.txt", "/shared/free.txt", "0", http.StatusServiceUnavailable},
 		{"infinity above", "/shared/sub/x.txt", "/shared", "infinity", http.StatusServiceUnavailable},
-		{"depth 0 on the parent", "/shared/free.txt", "/shared", "0", http.StatusServiceUnavailable},
+		{"depth 0 on the parent, new member", "/shared/new.txt", "/shared", "0", http.StatusServiceUnavailable},
+		{"depth 0 on the parent, member overwritten", "/shared/free.txt", "/shared", "0", http.StatusOK},
 		{"depth 0 two levels up", "/shared/sub/x.txt", "/shared", "0", http.StatusOK},
 		{"other resource", "/shared/free.txt", "/shared/locked.txt", "0", http.StatusOK},
 	}
@@ -1166,6 +1167,37 @@ func TestLockDuringWriteRefusedAtOnce(t *testing.T) {
 				wantStatus(t, "LOCK after the write", ownerDo("LOCK", tt.lock, lockBody("exclusive", ""), map[string]string{"Depth": tt.depth}), http.StatusOK)
 			}
 		})
+	}
+}
+
+// Only a change of membership conflicts with a Depth 0 lock on the collection.
+func TestWriteRunningDepthZeroOnCollection(t *testing.T) {
+	tests := []struct {
+		name  string
+		write writeTarget
+		want  bool
+	}{
+		{"member overwritten", writeTarget{name: "/c/a"}, false},
+		{"member overwritten by COPY or MOVE", writeTarget{name: "/c/a", replaces: true, tree: true}, false},
+		{"new member", writeTarget{name: "/c/a", member: true}, true},
+		{"member removed or moved away", writeTarget{name: "/c/a", member: true, replaces: true, tree: true}, true},
+		{"new member further down", writeTarget{name: "/c/d/a", member: true}, false},
+		{"the collection itself", writeTarget{name: "/c"}, true},
+		{"collection removed above", writeTarget{name: "/", tree: true}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newLockManager(t.TempDir())
+			m.writes = []runningWrite{{name: tt.write.name, tree: tt.write.tree, member: tt.write.member}}
+			if got := m.writeRunning("/c", true); got != tt.want {
+				t.Errorf("writeRunning = %v, want %v", got, tt.want)
+			}
+		})
+	}
+	m := newLockManager(t.TempDir())
+	m.writes = []runningWrite{{name: "/a", member: true}}
+	if !m.writeRunning("/", true) {
+		t.Error("new member of the root does not conflict")
 	}
 }
 
@@ -1351,10 +1383,10 @@ func TestShareIfHeaderIs412(t *testing.T) {
 		"PROPPATCH": shareDo(share, "PROPPATCH", "/free.txt", `<D:propertyupdate xmlns:D="DAV:"/>`, ifHdr),
 		"MOVE":      shareDo(share, "MOVE", "/free.txt", "", dest),
 		"COPY":      shareDo(share, "COPY", "/free.txt", "", dest),
-		"malformed": shareDo(share, "PUT", "/free.txt", "x", map[string]string{"If": "nonsense"}),
 	} {
 		wantStatus(t, name, w, http.StatusPreconditionFailed)
 	}
+	wantStatus(t, "malformed", shareDo(share, "PUT", "/free.txt", "x", map[string]string{"If": "nonsense"}), http.StatusBadRequest)
 	if data, err := os.ReadFile(ownerFile("/shared/free.txt")); err != nil || string(data) != "original" {
 		t.Errorf("file holds %q, %v", data, err)
 	}

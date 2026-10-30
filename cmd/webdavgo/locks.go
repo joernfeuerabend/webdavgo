@@ -72,10 +72,12 @@ func isBelow(name, root string) bool {
 }
 
 // runningWrite is a write between its lock check and its end. tree marks a
-// write that affects everything below name.
+// write that affects everything below name, member one that adds or removes
+// the URL name in its parent.
 type runningWrite struct {
-	name string
-	tree bool
+	name   string
+	tree   bool
+	member bool
 }
 
 // lockManager holds the locks of one user. Names are slash paths relative to
@@ -246,11 +248,11 @@ func parseIfConditions(s string) ([]ifCondition, string, error) {
 // requestIfLists parses the request's If header. Repeated headers are read as
 // one, as RFC 9110 §5.3 allows for a list.
 func requestIfLists(r *http.Request) ([]ifList, error) {
-	values := r.Header.Values("If")
-	if len(values) == 0 {
+	value := strings.TrimSpace(strings.Join(r.Header.Values("If"), " "))
+	if value == "" {
 		return nil, nil
 	}
-	lists, err := parseIfHeader(strings.Join(values, " "))
+	lists, err := parseIfHeader(value)
 	if err != nil {
 		logger.Debug("If header rejected", "path", r.URL.Path, "reason", err)
 		return nil, err
@@ -395,18 +397,14 @@ func (m *lockManager) checkTargets(targets []writeTarget, submitted map[string]b
 // a recipient holds no locks, so an If header cannot be true for one and is 412,
 // and the answers name no owner path.
 func (m *lockManager) admitWrite(w http.ResponseWriter, r *http.Request, isShare bool, name string, targets []writeTarget) (done func(removed ...string), ok bool) {
-	var lists []ifList
-	if isShare {
-		if len(r.Header.Values("If")) > 0 {
-			http.Error(w, "precondition failed", http.StatusPreconditionFailed)
-			return nil, false
-		}
-	} else {
-		var err error
-		if lists, err = requestIfLists(r); err != nil {
-			http.Error(w, "invalid If header", http.StatusBadRequest)
-			return nil, false
-		}
+	lists, err := requestIfLists(r)
+	if err != nil {
+		http.Error(w, "invalid If header", http.StatusBadRequest)
+		return nil, false
+	}
+	if isShare && len(lists) > 0 {
+		http.Error(w, "precondition failed", http.StatusPreconditionFailed)
+		return nil, false
 	}
 	// x/net must not evaluate it again.
 	r.Header.Del("If")
@@ -435,7 +433,7 @@ func (m *lockManager) admitWrite(w http.ResponseWriter, r *http.Request, isShare
 	}
 	entries := make([]runningWrite, len(targets))
 	for i, t := range targets {
-		entries[i] = runningWrite{name: t.name, tree: t.tree}
+		entries[i] = runningWrite{name: t.name, tree: t.tree, member: t.member}
 	}
 	m.writes = append(m.writes, entries...)
 	return func(removed ...string) {
@@ -457,14 +455,17 @@ func (m *lockManager) admitWrite(w http.ResponseWriter, r *http.Request, isShare
 }
 
 // writeRunning reports whether a running write touches what a new lock would
-// cover. The list of members of the lock root counts too (§7.4). The caller
-// holds mu.
+// cover. A Depth 0 lock on a collection covers its properties and membership
+// only (§7.4), so of the writes below it only one that adds or removes a direct
+// member conflicts. The caller holds mu.
 func (m *lockManager) writeRunning(name string, zeroDepth bool) bool {
 	for _, w := range m.writes {
 		switch {
 		case w.name == name:
 			return true
-		case isBelow(w.name, name) && (!zeroDepth || path.Dir(w.name) == name):
+		case isBelow(w.name, name) && !zeroDepth:
+			return true
+		case w.member && path.Dir(w.name) == name:
 			return true
 		case w.tree && isBelow(name, w.name):
 			return true
