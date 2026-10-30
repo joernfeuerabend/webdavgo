@@ -20,7 +20,7 @@ func TestInstallUnitText(t *testing.T) {
 		lines[l] = true
 	}
 	for _, want := range []string{
-		"LogsDirectory=webdavgo", "LogsDirectoryMode=0750", "ReadWritePaths=/var/lib/webdavgo",
+		"LogsDirectory=webdavgo", "LogsDirectoryMode=0750", "ReadWritePaths=/var/lib/webdavgo /etc/webdavgo",
 		"User=webdavgo", "Group=webdavgo", "NoNewPrivileges=yes", "ProtectSystem=strict", "ProtectHome=yes",
 		"PrivateTmp=yes", "PrivateDevices=yes", "ProtectKernelTunables=yes", "ProtectKernelModules=yes",
 		"ProtectKernelLogs=yes", "ProtectControlGroups=yes",
@@ -40,6 +40,42 @@ func TestInstallUnitText(t *testing.T) {
 	}
 	if strings.Contains(installUnitText, "Logs go to journald") {
 		t.Error("unit comment still says that all logs go to journald")
+	}
+}
+
+// TestInstallUnitWritableDirs: under ProtectSystem=strict the service can
+// write only where the unit allows it, so every directory the installed
+// config sends writes to must be covered. The config file needs its whole
+// directory, because the admin UI saves through a temporary file and a rename.
+func TestInstallUnitWritableDirs(t *testing.T) {
+	var writable []string
+	for _, l := range strings.Split(installUnitText, "\n") {
+		if v, ok := strings.CutPrefix(l, "ReadWritePaths="); ok {
+			writable = append(writable, strings.Fields(v)...)
+		}
+		if v, ok := strings.CutPrefix(l, "LogsDirectory="); ok {
+			writable = append(writable, filepath.Join("/var/log", v))
+		}
+	}
+	c := defaultConfig()
+	if err := decodeConfigText(installConfig, installConfigText, &c); err != nil {
+		t.Fatal(err)
+	}
+	c.resolve()
+	for name, dir := range map[string]string{
+		"data_dir":   c.DataDir,
+		"cert_dir":   c.CertDir,
+		"config":     filepath.Dir(installConfig),
+		"access_log": filepath.Dir(c.AccessLog),
+		"server_log": filepath.Dir(c.ServerLog),
+	} {
+		covered := false
+		for _, w := range writable {
+			covered = covered || dir == w || strings.HasPrefix(dir, w+"/")
+		}
+		if !covered {
+			t.Errorf("%s directory %s is not writable under the unit (writable: %v)", name, dir, writable)
+		}
 	}
 }
 
