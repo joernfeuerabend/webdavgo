@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/xml"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"golang.org/x/net/webdav"
 )
@@ -463,8 +465,15 @@ func TestPropfindInvalidBody(t *testing.T) {
 		{"trailing directive", `<propfind ` + d + `><allprop/></propfind><!DOCTYPE x>`},
 		{"text before root", `garbage<propfind ` + d + `><allprop/></propfind>`},
 		{"late XML declaration", ` <?xml version="1.0"?><propfind ` + d + `><allprop/></propfind>`},
-		{"whitespace only", " \n"},
 		{"comment only", `<!-- nothing -->`},
+		{"undeclared prefix on property", `<propfind xmlns="DAV:"><prop><bar:foo/></prop></propfind>`},
+		{"undeclared prefix on attribute", `<propfind xmlns="DAV:" bar:a="1"><allprop/></propfind>`},
+		{"undeclared prefix inside ignored element", `<propfind ` + d + `><allprop/><x:y xmlns:x="urn:x"><bar:z/></x:y></propfind>`},
+		{"prefix declared only on a sibling", `<propfind ` + d + `><allprop/><a xmlns:bar="urn:b"/><bar:c/></propfind>`},
+		{"unknown encoding", `<?xml version="1.0" encoding="no-such-charset"?><propfind ` + d + `><allprop/></propfind>`},
+		{"bytes invalid in declared encoding", `<?xml version="1.0" encoding="Shift_JIS"?><propfind ` + d + `><allprop/><x>` + "\xff\xff" + `</x></propfind>`},
+		{"UTF-16 cut in a character", "\xff\xfe<\x00p\x00>"},
+		{"UTF-16 declared without a mark", `<?xml version="1.0" encoding="UTF-16"?><propfind ` + d + `><allprop/></propfind>`},
 		{"repeated attribute", `<propfind ` + d + ` a="1" a="2"><allprop/></propfind>`},
 		{"error inside ignored element", `<propfind ` + d + `><allprop/><x:y xmlns:x="urn:x"><z></x:y></propfind>`},
 		{"empty prefix on root", `<D:propfind xmlns:D="DAV:" xmlns:bar=""><D:allprop/></D:propfind>`},
@@ -481,7 +490,9 @@ func TestPropfindInvalidBody(t *testing.T) {
 		{"include alone", `<propfind ` + d + `><include><getetag/></include></propfind>`},
 		{"include with prop", `<propfind ` + d + `><prop/><include/></propfind>`},
 		{"include with propname", `<propfind ` + d + `><propname/><include/></propfind>`},
-		{"include before allprop", `<propfind ` + d + `><include/><allprop/></propfind>`},
+		{"include before prop", `<propfind ` + d + `><include/><prop/></propfind>`},
+		{"include before propname", `<propfind ` + d + `><include/><propname/></propfind>`},
+		{"two includes before allprop", `<propfind ` + d + `><include/><include/><allprop/></propfind>`},
 		{"two includes", `<propfind ` + d + `><allprop/><include/><include/></propfind>`},
 	}
 	for _, tt := range tests {
@@ -517,6 +528,12 @@ func TestPropfindAcceptedBody(t *testing.T) {
 		unwanted   string
 	}{
 		{"empty", "", "<d:getetag>", ""},
+		{"line break only", "\n", "<d:getetag>", ""},
+		{"whitespace only", " \t\r\n", "<d:getetag>", ""},
+		{"UTF-16 whitespace only", utf16Body(" \n", binary.LittleEndian), "<d:getetag>", ""},
+		{"prefix declared on an ancestor", `<D:propfind xmlns:D="DAV:"><D:prop xmlns:x="urn:x"><x:y><x:z/></x:y><D:displayname/></D:prop></D:propfind>`, "<d:displayname>", "<d:getetag>"},
+		{"prefix declared again on a sibling", `<propfind xmlns="DAV:"><allprop/><x:a xmlns:x="urn:x"/><x:b xmlns:x="urn:x"/></propfind>`, "<d:getetag>", ""},
+		{"xml prefix needs no declaration", `<propfind xmlns="DAV:" xml:lang="en"><allprop/></propfind>`, "<d:getetag>", ""},
 		{"BOM and declaration", "\xef\xbb\xbf" + `<?xml version="1.0"?><propfind xmlns="DAV:"><allprop/></propfind>`, "<d:getetag>", ""},
 		{"comment and whitespace around root", "<!-- a -->\n" + `<propfind xmlns="DAV:"><allprop/></propfind>` + "\n<!-- b -->\n", "<d:getetag>", ""},
 		{"unknown extension element", `<propfind xmlns="DAV:">` + ext + `<allprop/>` + ext + `</propfind>`, "<d:getetag>", ""},
@@ -538,6 +555,61 @@ func TestPropfindAcceptedBody(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// utf16Body encodes s as UTF-16 with a byte order mark.
+func utf16Body(s string, order binary.AppendByteOrder) string {
+	b := order.AppendUint16(nil, 0xFEFF)
+	for _, u := range utf16.Encode([]rune(s)) {
+		b = order.AppendUint16(b, u)
+	}
+	return string(b)
+}
+
+func TestPropfindEncodings(t *testing.T) {
+	share := lockTestEnv(t)
+	const prop = `<propfind xmlns="DAV:"><prop><displayname/><größe/></prop></propfind>`
+	tests := []struct{ name, body string }{
+		{"UTF-8", prop},
+		{"UTF-8 with mark and other declaration", "\xef\xbb\xbf" + `<?xml version="1.0" encoding="ISO-8859-1"?>` + prop},
+		{"UTF-16 LE", utf16Body(prop, binary.LittleEndian)},
+		{"UTF-16 BE", utf16Body(prop, binary.BigEndian)},
+		{"UTF-16 with declaration", utf16Body(`<?xml version="1.0" encoding="UTF-16"?>`+prop, binary.LittleEndian)},
+		{"ISO-8859-1", `<?xml version="1.0" encoding="ISO-8859-1"?><propfind xmlns="DAV:"><prop><displayname/><gr` + "\xf6\xdf" + `e/></prop></propfind>`},
+		{"ISO-8859-1 value in a property element", `<?xml version="1.0" encoding="iso-8859-1"?><propfind xmlns="DAV:"><prop><displayname/><gr` + "\xf6\xdf" + `e>` + "\xc4" + `</gr` + "\xf6\xdf" + `e></prop></propfind>`},
+		{"windows-1252", `<?xml version="1.0" encoding="windows-1252"?><propfind xmlns="DAV:"><prop><displayname/><gr` + "\xf6\xdf" + `e/></prop></propfind>`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for endpoint, w := range propfindBoth(share, tt.body) {
+				out := w.Body.String()
+				if w.Code != http.StatusMultiStatus {
+					t.Fatalf("%s: status %d: %s", endpoint, w.Code, out)
+				}
+				// Only a decoded body gives the UTF-8 name in the 404 propstat.
+				if !strings.Contains(out, "<d:displayname>") || !strings.Contains(out, "<d:größe/>") {
+					t.Errorf("%s: properties missing: %s", endpoint, out)
+				}
+			}
+		})
+	}
+}
+
+func TestPropfindIncludeInEitherOrder(t *testing.T) {
+	share := lockTestEnv(t)
+	const include = `<include><quota-available-bytes/></include>`
+	for name, body := range map[string]string{
+		"before":                 `<propfind xmlns="DAV:">` + include + `<allprop/></propfind>`,
+		"after":                  `<propfind xmlns="DAV:"><allprop/>` + include + `</propfind>`,
+		"before, with extension": `<propfind xmlns="DAV:">` + include + `<x:y xmlns:x="urn:x"/><allprop/></propfind>`,
+	} {
+		for endpoint, w := range propfindBoth(share, body) {
+			out := w.Body.String()
+			if w.Code != http.StatusMultiStatus || !strings.Contains(out, "<d:getetag>") || !strings.Contains(out, "<d:quota-available-bytes>") {
+				t.Errorf("%s, %s: status %d: %s", name, endpoint, w.Code, out)
+			}
+		}
 	}
 }
 
