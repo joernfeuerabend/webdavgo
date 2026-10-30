@@ -355,12 +355,11 @@ func TestSupportedLockContent(t *testing.T) {
 	}
 }
 
-func TestLockPropertiesInAllpropAndPropname(t *testing.T) {
+func TestLockPropertiesInAllprop(t *testing.T) {
 	lockTestEnv(t)
 	for name, body := range map[string]string{
-		"empty":    "",
-		"allprop":  `<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:allprop/></d:propfind>`,
-		"propname": `<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:propname/></d:propfind>`,
+		"empty":   "",
+		"allprop": `<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:allprop/></d:propfind>`,
 	} {
 		w := ownerDo("PROPFIND", "/shared/free.txt", body, depth0())
 		for _, prop := range []string{"<d:supportedlock>", "<d:lockdiscovery/>"} {
@@ -412,5 +411,83 @@ func TestDAVHeader(t *testing.T) {
 	}
 	if got := ownerDo(http.MethodOptions, "/", "", nil).Header().Get("DAV"); got != "1, 2" {
 		t.Errorf("user endpoint: DAV %q, want 1, 2", got)
+	}
+}
+
+func TestReadShareRefusesProppatch(t *testing.T) {
+	share := lockTestEnv(t)
+	share.Permission = "read"
+	body := `<?xml version="1.0"?><D:propertyupdate xmlns:D="DAV:"/>`
+	if w := shareDo(share, "PROPPATCH", "/free.txt", body, nil); w.Code != http.StatusForbidden {
+		t.Errorf("status %d, want 403", w.Code)
+	}
+}
+
+func TestShareAllowHeader(t *testing.T) {
+	share := lockTestEnv(t)
+	for _, target := range []string{"/", "/free.txt", "/missing.txt"} {
+		allow := shareDo(share, http.MethodOptions, target, "", nil).Header().Get("Allow")
+		if allow == "" || strings.Contains(allow, "LOCK") {
+			t.Errorf("%s: Allow %q", target, allow)
+		}
+	}
+	allow := ownerDo(http.MethodOptions, "/shared/free.txt", "", nil).Header().Get("Allow")
+	if !strings.Contains(allow, "LOCK") || !strings.Contains(allow, "UNLOCK") {
+		t.Errorf("user endpoint: Allow %q", allow)
+	}
+}
+
+func TestPropnameReturnsNamesOnly(t *testing.T) {
+	share := lockTestEnv(t)
+	token := ownerLock(t, "/shared/free.txt", "0")
+	body := `<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:propname/></d:propfind>`
+	for name, w := range map[string]*httptest.ResponseRecorder{
+		"user file":  ownerDo("PROPFIND", "/shared/free.txt", body, depth0()),
+		"share file": shareDo(share, "PROPFIND", "/free.txt", body, depth0()),
+	} {
+		if w.Code != http.StatusMultiStatus {
+			t.Fatalf("%s: status %d", name, w.Code)
+		}
+		out := w.Body.String()
+		for _, prop := range []string{"getlastmodified", "getetag", "getcontentlength", "getcontenttype", "resourcetype", "creationdate", "displayname", "supportedlock", "lockdiscovery"} {
+			if !strings.Contains(out, "<d:"+prop+"/>") {
+				t.Errorf("%s: %s missing:\n%s", name, prop, out)
+			}
+		}
+		for _, value := range []string{token, "exclusive", "GMT", "quota-"} {
+			if strings.Contains(out, value) {
+				t.Errorf("%s: value %q in response:\n%s", name, value, out)
+			}
+		}
+	}
+	// A collection has no content length or type, but quota properties. A share
+	// does not report the owner's used bytes.
+	collections := []struct {
+		name     string
+		w        *httptest.ResponseRecorder
+		wantUsed bool
+	}{
+		{"user collection", ownerDo("PROPFIND", "/shared/sub", body, depth0()), true},
+		{"share collection", shareDo(share, "PROPFIND", "/sub", body, depth0()), false},
+	}
+	for _, c := range collections {
+		if c.w.Code != http.StatusMultiStatus {
+			t.Fatalf("%s: status %d", c.name, c.w.Code)
+		}
+		out := c.w.Body.String()
+		if strings.Contains(out, "getcontentlength") || !strings.Contains(out, "<d:resourcetype/>") {
+			t.Errorf("%s:\n%s", c.name, out)
+		}
+		if !strings.Contains(out, "<d:quota-available-bytes/>") {
+			t.Errorf("%s: quota-available-bytes missing:\n%s", c.name, out)
+		}
+		if got := strings.Contains(out, "<d:quota-used-bytes/>"); got != c.wantUsed {
+			t.Errorf("%s: quota-used-bytes listed = %v, want %v:\n%s", c.name, got, c.wantUsed, out)
+		}
+	}
+	// allprop stays without quota properties.
+	allprop := `<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:allprop/></d:propfind>`
+	if out := ownerDo("PROPFIND", "/shared/sub", allprop, depth0()).Body.String(); strings.Contains(out, "quota-") {
+		t.Errorf("allprop:\n%s", out)
 	}
 }

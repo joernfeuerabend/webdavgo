@@ -119,6 +119,13 @@ the owner's remaining quota. `quota-used-bytes` is answered as not found
 (404 propstat), since the owner's total usage is no business of the
 recipient.
 
+## PROPFIND with propname
+
+`propname` returns the names of the properties a resource has, without values
+(RFC 4918 §9.1), on the user endpoint and on shares. On a collection this
+includes `quota-available-bytes` and, except on shares, `quota-used-bytes`
+(RFC 4331 §2), although `allprop` leaves them out.
+
 ## Locks
 
 The user endpoint is DAV class 2 and accepts exclusive write locks. PROPFIND

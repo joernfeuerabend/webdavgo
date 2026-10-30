@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -196,11 +197,14 @@ func serveShare(w http.ResponseWriter, r *http.Request, share *Share, shareRoot 
 		// Writes through a share are charged to the owner; recipients have
 		// no quota of their own.
 		serveDAV(w, r, h, absPath, share.OwnerUsername)
-		// A share has no locking, so it is not class 2 (RFC 4918 §18.2). x/net
-		// always sends "1, 2" and writes nothing for OPTIONS, so the header
-		// can still be replaced here.
+		// A share has no locking, so it is not class 2 (RFC 4918 §18.2) and
+		// does not allow LOCK or UNLOCK. x/net always sends both and writes
+		// nothing for OPTIONS, so the headers can still be replaced here.
 		if method == http.MethodOptions {
 			w.Header().Set("DAV", "1")
+			allow := strings.Split(w.Header().Get("Allow"), ", ")
+			allow = slices.DeleteFunc(allow, func(m string) bool { return m == "LOCK" || m == "UNLOCK" })
+			w.Header().Set("Allow", strings.Join(allow, ", "))
 		}
 	}
 }
@@ -208,7 +212,7 @@ func serveShare(w http.ResponseWriter, r *http.Request, share *Share, shareRoot 
 // isShareWriteMethod reports whether the HTTP method modifies state.
 func isShareWriteMethod(method string) bool {
 	switch method {
-	case "PUT", "DELETE", "MKCOL", "MOVE", "COPY":
+	case "PUT", "DELETE", "MKCOL", "MOVE", "COPY", "PROPPATCH":
 		return true
 	}
 	return false

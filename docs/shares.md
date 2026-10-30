@@ -107,7 +107,7 @@ curl -X SEARCH \
 |----------------------|-----------|-----------------|
 | OPTIONS, GET, HEAD   | ✓         | ✓               |
 | PROPFIND, SEARCH     | ✓         | ✓               |
-| PUT, DELETE, MKCOL   | 403       | ✓               |
+| PUT, DELETE, MKCOL, PROPPATCH | 403 | ✓             |
 | MOVE, COPY           | 403       | ✓ (within share only) |
 | LOCK, UNLOCK         | 501       | 501             |
 
@@ -125,7 +125,8 @@ share path translated, so a lock taken on an ancestor of the shared directory
 counts too. A request with an `If` header gets `412 Precondition Failed`:
 lock tokens are never accepted through a share.
 
-OPTIONS on a share answers `DAV: 1`, not class 2. `DAV:supportedlock` and
+OPTIONS on a share answers `DAV: 1`, not class 2, and `Allow` does not list LOCK
+or UNLOCK. `DAV:supportedlock` and
 `DAV:lockdiscovery` are returned empty in PROPFIND, so a recipient never sees
 the owner's lock owners, tokens or lock roots.
 
