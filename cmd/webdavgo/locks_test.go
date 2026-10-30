@@ -4,7 +4,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/xml"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -434,6 +436,158 @@ func TestShareAllowHeader(t *testing.T) {
 	allow := ownerDo(http.MethodOptions, "/shared/free.txt", "", nil).Header().Get("Allow")
 	if !strings.Contains(allow, "LOCK") || !strings.Contains(allow, "UNLOCK") {
 		t.Errorf("user endpoint: Allow %q", allow)
+	}
+}
+
+// propfindBoth sends a Depth 0 PROPFIND of the same collection through the user
+// endpoint and through the share.
+func propfindBoth(share *Share, body string) map[string]*httptest.ResponseRecorder {
+	return map[string]*httptest.ResponseRecorder{
+		"user":  ownerDo("PROPFIND", "/shared", body, depth0()),
+		"share": shareDo(share, "PROPFIND", "/", body, depth0()),
+	}
+}
+
+func TestPropfindInvalidBody(t *testing.T) {
+	share := lockTestEnv(t)
+	const d = `xmlns="DAV:"`
+	tests := []struct{ name, body string }{
+		// The two bodies litmus sends in propfind_invalid and propfind_invalid2.
+		{"litmus non-well-formed", `<foo>`},
+		{"litmus empty prefix", `<propfind xmlns="DAV:"><prop><bar:foo xmlns:bar=""/></prop></propfind>`},
+		{"unclosed root", `<propfind ` + d + `><allprop/>`},
+		{"mismatched tag", `<propfind ` + d + `><allprop></prop></propfind>`},
+		{"trailing text", `<propfind ` + d + `><allprop/></propfind>garbage`},
+		{"trailing element", `<propfind ` + d + `><allprop/></propfind><x/>`},
+		{"trailing end tag", `<propfind ` + d + `><allprop/></propfind></propfind>`},
+		{"trailing directive", `<propfind ` + d + `><allprop/></propfind><!DOCTYPE x>`},
+		{"text before root", `garbage<propfind ` + d + `><allprop/></propfind>`},
+		{"late XML declaration", ` <?xml version="1.0"?><propfind ` + d + `><allprop/></propfind>`},
+		{"whitespace only", " \n"},
+		{"comment only", `<!-- nothing -->`},
+		{"repeated attribute", `<propfind ` + d + ` a="1" a="2"><allprop/></propfind>`},
+		{"error inside ignored element", `<propfind ` + d + `><allprop/><x:y xmlns:x="urn:x"><z></x:y></propfind>`},
+		{"empty prefix on root", `<D:propfind xmlns:D="DAV:" xmlns:bar=""><D:allprop/></D:propfind>`},
+		{"empty prefix inside ignored element", `<propfind ` + d + `><allprop/><x:y xmlns:x="urn:x"><z xmlns:bar=""/></x:y></propfind>`},
+		{"wrong root name", `<propertyupdate ` + d + `><allprop/></propertyupdate>`},
+		{"root without namespace", `<propfind><allprop/></propfind>`},
+		{"root in other namespace", `<propfind xmlns="urn:x"><allprop/></propfind>`},
+		{"no form", `<propfind ` + d + `/>`},
+		{"only extension element", `<propfind ` + d + `><x:y xmlns:x="urn:x"/></propfind>`},
+		{"form in other namespace", `<propfind ` + d + `><allprop xmlns="urn:x"/></propfind>`},
+		{"prop and allprop", `<propfind ` + d + `><prop><getetag/></prop><allprop/></propfind>`},
+		{"allprop and propname", `<propfind ` + d + `><allprop/><propname/></propfind>`},
+		{"two props", `<propfind ` + d + `><prop/><prop/></propfind>`},
+		{"include alone", `<propfind ` + d + `><include><getetag/></include></propfind>`},
+		{"include with prop", `<propfind ` + d + `><prop/><include/></propfind>`},
+		{"include with propname", `<propfind ` + d + `><propname/><include/></propfind>`},
+		{"include before allprop", `<propfind ` + d + `><include/><allprop/></propfind>`},
+		{"two includes", `<propfind ` + d + `><allprop/><include/><include/></propfind>`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for endpoint, w := range propfindBoth(share, tt.body) {
+				if w.Code != http.StatusBadRequest {
+					t.Errorf("%s: status %d, want 400: %s", endpoint, w.Code, w.Body)
+				}
+			}
+		})
+	}
+}
+
+func TestPropfindRejectionLogsReasonAtDebug(t *testing.T) {
+	lockTestEnv(t)
+	var buf bytes.Buffer
+	old := logger
+	t.Cleanup(func() { logger = old })
+	logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ownerDo("PROPFIND", "/shared", `<foo>`, depth0())
+	out := buf.String()
+	if !strings.Contains(out, "level=DEBUG") || !strings.Contains(out, "PROPFIND body rejected") || !strings.Contains(out, "reason=") {
+		t.Errorf("log output: %q", out)
+	}
+}
+
+func TestPropfindAcceptedBody(t *testing.T) {
+	share := lockTestEnv(t)
+	const ext = `<x:y xmlns:x="urn:x" x:a="1"><z>text</z></x:y>`
+	tests := []struct {
+		name, body string
+		want       string // element the response must hold
+		unwanted   string
+	}{
+		{"empty", "", "<d:getetag>", ""},
+		{"BOM and declaration", "\xef\xbb\xbf" + `<?xml version="1.0"?><propfind xmlns="DAV:"><allprop/></propfind>`, "<d:getetag>", ""},
+		{"comment and whitespace around root", "<!-- a -->\n" + `<propfind xmlns="DAV:"><allprop/></propfind>` + "\n<!-- b -->\n", "<d:getetag>", ""},
+		{"unknown extension element", `<propfind xmlns="DAV:">` + ext + `<allprop/>` + ext + `</propfind>`, "<d:getetag>", ""},
+		{"unknown DAV element", `<propfind xmlns="DAV:"><allprop/><future><deep/></future></propfind>`, "<d:getetag>", ""},
+		{"extension element with prop", `<propfind xmlns="DAV:">` + ext + `<prop><displayname/></prop></propfind>`, "<d:displayname>", "<d:getetag>"},
+		{"extension element with propname", `<propfind xmlns="DAV:"><propname/>` + ext + `</propfind>`, "<d:getetag/>", "GMT"},
+		{"extension children do not count as properties", `<propfind xmlns="DAV:"><prop><displayname/></prop>` + ext + `</propfind>`, "<d:displayname>", "<d:y/>"},
+		{"default namespace undeclared on a child", `<D:propfind xmlns:D="DAV:"><D:allprop/><y xmlns=""/></D:propfind>`, "<d:getetag>", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for endpoint, w := range propfindBoth(share, tt.body) {
+				out := w.Body.String()
+				if w.Code != http.StatusMultiStatus || !strings.Contains(out, tt.want) {
+					t.Errorf("%s: status %d, want 207 with %s: %s", endpoint, w.Code, tt.want, out)
+				}
+				if tt.unwanted != "" && strings.Contains(out, tt.unwanted) {
+					t.Errorf("%s: %s in response: %s", endpoint, tt.unwanted, out)
+				}
+			}
+		})
+	}
+}
+
+func TestPropfindEmptyProp(t *testing.T) {
+	share := lockTestEnv(t)
+	body := `<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop/></d:propfind>`
+	for endpoint, w := range propfindBoth(share, body) {
+		if w.Code != http.StatusMultiStatus {
+			t.Fatalf("%s: status %d", endpoint, w.Code)
+		}
+		want := `<d:propstat><d:prop></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`
+		if !strings.Contains(w.Body.String(), want) {
+			t.Errorf("%s: no empty prop with 200 OK: %s", endpoint, w.Body)
+		}
+	}
+}
+
+func TestPropfindAllpropInclude(t *testing.T) {
+	share := lockTestEnv(t)
+	body := `<propfind xmlns="DAV:"><allprop/><include><quota-available-bytes/><quota-used-bytes/><getetag/><lockdiscovery/><nosuchprop/></include></propfind>`
+	wantUsed := map[string]bool{"user": true, "share": false}
+	for endpoint, w := range propfindBoth(share, body) {
+		if w.Code != http.StatusMultiStatus {
+			t.Fatalf("%s: status %d", endpoint, w.Code)
+		}
+		out := w.Body.String()
+		for _, prop := range []string{"<d:displayname>", "<d:supportedlock", "<d:quota-available-bytes>", "<d:nosuchprop/>"} {
+			if !strings.Contains(out, prop) {
+				t.Errorf("%s: %s missing: %s", endpoint, prop, out)
+			}
+		}
+		if got := strings.Contains(out, "<d:quota-used-bytes>"); got != wantUsed[endpoint] {
+			t.Errorf("%s: quota-used-bytes value = %v, want %v: %s", endpoint, got, wantUsed[endpoint], out)
+		}
+		// Named in include and part of allprop: answered once, not as 404.
+		for _, prop := range []string{"<d:getetag>", "<d:lockdiscovery"} {
+			if n := strings.Count(out, prop); n != 1 {
+				t.Errorf("%s: %s appears %d times: %s", endpoint, prop, n, out)
+			}
+		}
+	}
+	// On a file the quota properties are not found, as when named in prop.
+	out := ownerDo("PROPFIND", "/shared/free.txt", body, depth0()).Body.String()
+	if !strings.Contains(out, "<d:quota-available-bytes/>") || !strings.Contains(out, "404 Not Found") {
+		t.Errorf("file: %s", out)
+	}
+	// An empty include adds nothing.
+	out = ownerDo("PROPFIND", "/shared", `<propfind xmlns="DAV:"><allprop/><include/></propfind>`, depth0()).Body.String()
+	if !strings.Contains(out, "<d:getetag>") || strings.Contains(out, "quota-") || strings.Contains(out, "404 Not Found") {
+		t.Errorf("empty include: %s", out)
 	}
 }
 

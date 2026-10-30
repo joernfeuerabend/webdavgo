@@ -8,6 +8,7 @@ package main
 // ourselves so all standard properties including creationdate are returned.
 
 import (
+	"bytes"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -19,16 +20,6 @@ import (
 	"strings"
 	"time"
 )
-
-// propfindReq is the request body structure for PROPFIND.
-type propfindReq struct {
-	XMLName  xml.Name  `xml:"propfind"`
-	Allprop  *struct{} `xml:"allprop"`
-	Propname *struct{} `xml:"propname"`
-	Prop     struct {
-		Props []anyElem `xml:",any"`
-	} `xml:"prop"`
-}
 
 // handlePropfind handles WebDAV PROPFIND requests, including the creationdate
 // property not supported by golang.org/x/net/webdav.
@@ -81,7 +72,12 @@ func handlePropfind(w http.ResponseWriter, r *http.Request, dataDir, urlPrefix, 
 		}
 		return
 	}
-	known, unknown, all, namesOnly := parsePropfindProps(body)
+	known, unknown, all, namesOnly, err := parsePropfindProps(body)
+	if err != nil {
+		logger.Debug("PROPFIND body rejected", "path", r.URL.Path, "reason", err)
+		http.Error(w, "invalid PROPFIND body", http.StatusBadRequest)
+		return
+	}
 	// RFC 4918 §9.1: allprop includes the live properties of that document,
 	// and these two are defined there. They stay out of allPropNames because
 	// that list also serves SEARCH.
@@ -245,22 +241,131 @@ func writePropfindEntry(b *strings.Builder, dataDir, absPath string, fi os.FileI
 
 // parsePropfindProps parses the PROPFIND body and returns the known/unknown
 // property split. An empty or allprop body returns all known properties and
-// sets all. A propname body does the same and also sets namesOnly.
-func parsePropfindProps(body []byte) (known, unknown []string, all, namesOnly bool) {
+// sets all. A propname body does the same and also sets namesOnly. A body that
+// is not acceptable returns an error, which the caller answers with 400
+// (RFC 4918 §8.2).
+//
+// The body is walked token by token because xml.Unmarshal stops at the end of
+// the root element and skips what it has no field for, so it would miss
+// trailing content and errors inside ignored elements.
+func parsePropfindProps(body []byte) (known, unknown []string, all, namesOnly bool, err error) {
+	// RFC 4918 §9.1: an empty body is an allprop request.
 	if len(body) == 0 {
-		return allPropNames, nil, true, false
+		return allPropNames, nil, true, false, nil
 	}
-	var pf propfindReq
-	if err := xml.Unmarshal(body, &pf); err != nil {
-		return allPropNames, nil, true, false
+	// A byte order mark is legal, but the decoder returns it as text.
+	dec := xml.NewDecoder(bytes.NewReader(bytes.TrimPrefix(body, []byte("\xef\xbb\xbf"))))
+	var (
+		depth           int
+		sawRoot         bool
+		form            string
+		sawInclude      bool
+		props, included []string
+		collect         *[]string // receives the children of the current depth 1 element
+	)
+	for {
+		offset := dec.InputOffset()
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, nil, false, false, fmt.Errorf("parse XML: %w", err)
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if err := checkPropfindAttrs(t.Attr); err != nil {
+				return nil, nil, false, false, err
+			}
+			switch depth {
+			case 0:
+				if sawRoot {
+					return nil, nil, false, false, fmt.Errorf("second root element <%s>", t.Name.Local)
+				}
+				if t.Name.Space != "DAV:" || t.Name.Local != "propfind" {
+					return nil, nil, false, false, fmt.Errorf("root element {%s}%s is not {DAV:}propfind", t.Name.Space, t.Name.Local)
+				}
+				sawRoot = true
+			case 1:
+				collect = nil
+				// Anything else is ignored as an extension (RFC 4918 §17).
+				if t.Name.Space != "DAV:" {
+					break
+				}
+				switch t.Name.Local {
+				case "prop", "allprop", "propname":
+					if form != "" {
+						return nil, nil, false, false, fmt.Errorf("<%s> after <%s>", t.Name.Local, form)
+					}
+					form = t.Name.Local
+					if form == "prop" {
+						collect = &props
+					}
+				case "include":
+					if form != "allprop" || sawInclude {
+						return nil, nil, false, false, fmt.Errorf("<include> must follow <allprop> once")
+					}
+					sawInclude = true
+					collect = &included
+				}
+			case 2:
+				if collect != nil {
+					*collect = append(*collect, t.Name.Local)
+				}
+			}
+			depth++
+		case xml.EndElement:
+			depth--
+		case xml.CharData:
+			// encoding/xml accepts text outside the root element.
+			if depth == 0 && len(bytes.Trim(t, " \t\r\n")) > 0 {
+				return nil, nil, false, false, fmt.Errorf("text outside the root element")
+			}
+		case xml.ProcInst:
+			// encoding/xml accepts an XML declaration anywhere.
+			if strings.EqualFold(t.Target, "xml") && offset != 0 {
+				return nil, nil, false, false, fmt.Errorf("XML declaration not at the start of the body")
+			}
+		case xml.Directive:
+			if sawRoot || depth > 0 {
+				return nil, nil, false, false, fmt.Errorf("directive after the start of the root element")
+			}
+		}
 	}
-	if pf.Allprop != nil || len(pf.Prop.Props) == 0 {
-		return allPropNames, nil, true, pf.Allprop == nil && pf.Propname != nil
+	if !sawRoot {
+		return nil, nil, false, false, fmt.Errorf("no root element")
 	}
-	var requested []string
-	for _, p := range pf.Prop.Props {
-		requested = append(requested, p.XMLName.Local)
+	switch form {
+	case "prop":
+		// An empty prop names no properties, so unlike a missing body it is
+		// not allprop. Each response then carries an empty prop with 200 OK,
+		// since RFC 4918 §14.24 requires at least one propstat.
+		known, unknown = splitRequested(props)
+		return known, unknown, false, false, nil
+	case "allprop":
+		// RFC 4918 §9.1: include adds to allprop. Every known property is
+		// already in allprop, so only the others are left to answer.
+		_, unknown = splitRequested(included)
+		return allPropNames, unknown, true, false, nil
+	case "propname":
+		return allPropNames, nil, true, true, nil
 	}
-	known, unknown = splitRequested(requested)
-	return known, unknown, false, false
+	return nil, nil, false, false, fmt.Errorf("none of <prop>, <allprop> or <propname> in <propfind>")
+}
+
+// checkPropfindAttrs rejects what encoding/xml lets pass in a start tag: a
+// prefix bound to the empty string, which XML Namespaces 1.0 §3 forbids, and a
+// repeated attribute, which XML 1.0 §3.1 and Namespaces 1.0 §6.3 forbid.
+func checkPropfindAttrs(attrs []xml.Attr) error {
+	seen := make(map[xml.Name]bool, len(attrs))
+	for _, a := range attrs {
+		if a.Name.Space == "xmlns" && a.Value == "" {
+			return fmt.Errorf("namespace prefix %q bound to the empty string", a.Name.Local)
+		}
+		if seen[a.Name] {
+			return fmt.Errorf("repeated attribute %q", a.Name.Local)
+		}
+		seen[a.Name] = true
+	}
+	return nil
 }

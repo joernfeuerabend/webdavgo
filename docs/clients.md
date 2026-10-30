@@ -119,6 +119,31 @@ the owner's remaining quota. `quota-used-bytes` is answered as not found
 (404 propstat), since the owner's total usage is no business of the
 recipient.
 
+## PROPFIND request bodies
+
+The same rules apply on the user endpoint and on shares.
+
+| Body | Answer |
+|------|--------|
+| empty (no bytes at all) | 207, as `allprop` (RFC 4918 §9.1) |
+| `prop` | 207 with the named properties |
+| empty `prop` | 207, each response carries an empty `prop` with 200 OK |
+| `allprop` | 207 with all properties except the quota properties |
+| `allprop` followed by `include` | 207 with `allprop` and the included properties, for example the quota properties |
+| `propname` | 207 with property names only |
+| not well-formed XML, including content after the root element or a body of only whitespace | 400 (RFC 4918 §8.2) |
+| a namespace prefix bound to the empty string (`xmlns:bar=""`) | 400 |
+| root element other than `DAV:propfind` | 400 |
+| none or several of `prop`, `allprop`, `propname`, or `include` without a preceding `allprop` | 400 |
+
+Other elements, in `DAV:` or any other namespace, are ignored (RFC 4918 §17). A
+400 has no XML body, and the reason is logged at Debug. Only UTF-8 bodies are
+accepted: a body that declares another encoding gets 400.
+
+An included property the server does not have is answered in a 404 propstat, the
+same as one named in `prop`. A refused `Depth: infinity` (403) and a missing
+resource (404) take precedence over a 400 for the body.
+
 ## PROPFIND with propname
 
 `propname` returns the names of the properties a resource has, without values
