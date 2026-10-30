@@ -125,8 +125,8 @@ func serveShare(w http.ResponseWriter, r *http.Request, share *Share, shareRoot 
 	method := r.Method
 	sharePrefix := "/s/" + share.ID
 
-	// LOCK and UNLOCK are always rejected. MemLS is provided only so that
-	// x/net/webdav doesn't panic; we never surface it to recipients.
+	// LOCK and UNLOCK are always rejected: recipients only ever run into the
+	// owner's locks, they cannot create, refresh or remove any.
 	if method == "LOCK" || method == "UNLOCK" {
 		http.Error(w, "not implemented", http.StatusNotImplemented)
 		return
@@ -178,12 +178,12 @@ func serveShare(w http.ResponseWriter, r *http.Request, share *Share, shareRoot 
 	case "PROPFIND":
 		r2 := r.Clone(r.Context())
 		r2.URL.Path = subPath
-		handlePropfind(w, r2, shareRoot, sharePrefix, share.OwnerUsername)
+		handlePropfind(w, r2, shareRoot, sharePrefix, share.OwnerUsername, nil)
 	default:
 		h := &webdav.Handler{
 			Prefix:     sharePrefix,
 			FileSystem: davFS{webdav.Dir(shareRoot)},
-			LockSystem: webdav.NewMemLS(),
+			LockSystem: shareLocks{owner: userLocks(share.OwnerUsername).temporary(), root: share.Path},
 			Logger: func(req *http.Request, err error) {
 				if err != nil {
 					status := davStatus(req)
@@ -196,6 +196,12 @@ func serveShare(w http.ResponseWriter, r *http.Request, share *Share, shareRoot 
 		// Writes through a share are charged to the owner; recipients have
 		// no quota of their own.
 		serveDAV(w, r, h, absPath, share.OwnerUsername)
+		// A share has no locking, so it is not class 2 (RFC 4918 §18.2). x/net
+		// always sends "1, 2" and writes nothing for OPTIONS, so the header
+		// can still be replaced here.
+		if method == http.MethodOptions {
+			w.Header().Set("DAV", "1")
+		}
 	}
 }
 

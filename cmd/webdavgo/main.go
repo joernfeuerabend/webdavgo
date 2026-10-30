@@ -37,7 +37,7 @@ func getDavHandler(username string) *webdav.Handler {
 	h := &webdav.Handler{
 		Prefix:     "/",
 		FileSystem: davFS{webdav.Dir(userDataRoot(username))},
-		LockSystem: webdav.NewMemLS(),
+		LockSystem: newLockTracker(webdav.NewMemLS()),
 		Logger: func(r *http.Request, err error) {
 			if err == nil {
 				return
@@ -49,6 +49,25 @@ func getDavHandler(username string) *webdav.Handler {
 	}
 	actual, _ := davHandlers.LoadOrStore(username, h)
 	return actual.(*webdav.Handler)
+}
+
+// userLocks returns the lock state of username, shared by the user endpoint
+// and the user's shares. It lives as long as the user's handler: until the
+// user is deleted or the process ends.
+func userLocks(username string) *lockTracker {
+	return getDavHandler(username).LockSystem.(*lockTracker)
+}
+
+// davHandlerFor returns the user's handler for one request. Only LOCK and
+// UNLOCK change recorded lock state, see lockTracker.temporary.
+func davHandlerFor(username, method string) *webdav.Handler {
+	h := getDavHandler(username)
+	if method == "LOCK" || method == "UNLOCK" {
+		return h
+	}
+	perRequest := *h
+	perRequest.LockSystem = userLocks(username).temporary()
+	return &perRequest
 }
 
 // adminFingerprint is the SHA-256 fingerprint of the self-signed admin
@@ -610,10 +629,10 @@ func buildWebDAVHandler() http.Handler {
 		case "SEARCH":
 			handleSearch(rw, r, root, "")
 		case "PROPFIND":
-			handlePropfind(rw, r, root, "", username)
+			handlePropfind(rw, r, root, "", username, userLocks(username))
 		default:
 			absPath := filepath.Join(root, filepath.FromSlash(path.Clean("/"+r.URL.Path)))
-			serveDAV(rw, r, getDavHandler(username), absPath, username)
+			serveDAV(rw, r, davHandlerFor(username, r.Method), absPath, username)
 		}
 	})
 }

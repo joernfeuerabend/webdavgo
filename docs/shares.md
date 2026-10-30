@@ -114,6 +114,21 @@ curl -X SEARCH \
 MOVE/COPY destinations must start with `/s/<same_share_id>/`. Cross-share or
 absolute destinations return 403.
 
+## Locks
+
+Recipients cannot create, refresh or remove locks, but their writes respect
+the owner's. A PUT, DELETE, MKCOL, MOVE, COPY or PROPPATCH through a share gets
+`423 Locked` when its target (for MOVE and COPY also the destination) is
+covered by a lock the owner holds on the user endpoint, the same as a write
+without a lock token there. The share uses the owner's lock state, with the
+share path translated, so a lock taken on an ancestor of the shared directory
+counts too. A request with an `If` header gets `412 Precondition Failed`:
+lock tokens are never accepted through a share.
+
+OPTIONS on a share answers `DAV: 1`, not class 2. `DAV:supportedlock` and
+`DAV:lockdiscovery` are returned empty in PROPFIND, so a recipient never sees
+the owner's lock owners, tokens or lock roots.
+
 ## Admin UI
 
 `/admin/shares` lists all shares across all owners with a **Revoke** button per
