@@ -248,11 +248,11 @@ func parseIfConditions(s string) ([]ifCondition, string, error) {
 // requestIfLists parses the request's If header. Repeated headers are read as
 // one, as RFC 9110 §5.3 allows for a list.
 func requestIfLists(r *http.Request) ([]ifList, error) {
-	value := strings.TrimSpace(strings.Join(r.Header.Values("If"), " "))
-	if value == "" {
+	values := r.Header.Values("If")
+	if len(values) == 0 {
 		return nil, nil
 	}
-	lists, err := parseIfHeader(value)
+	lists, err := parseIfHeader(strings.Join(values, " "))
 	if err != nil {
 		logger.Debug("If header rejected", "path", r.URL.Path, "reason", err)
 		return nil, err
