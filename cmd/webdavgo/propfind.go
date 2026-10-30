@@ -81,7 +81,7 @@ func handlePropfind(w http.ResponseWriter, r *http.Request, dataDir, urlPrefix, 
 		}
 		return
 	}
-	known, unknown, all := parsePropfindProps(body)
+	known, unknown, all, namesOnly := parsePropfindProps(body)
 	// RFC 4918 §9.1: allprop includes the live properties of that document,
 	// and these two are defined there. They stay out of allPropNames because
 	// that list also serves SEARCH.
@@ -120,9 +120,9 @@ func handlePropfind(w http.ResponseWriter, r *http.Request, dataDir, urlPrefix, 
 
 	switch depth {
 	case "0":
-		writePropfindEntry(&out, dataDir, absPath, fi, known, unknown, urlPrefix, q, l)
+		writePropfindEntry(&out, dataDir, absPath, fi, known, unknown, urlPrefix, q, l, namesOnly)
 	case "1":
-		writePropfindEntry(&out, dataDir, absPath, fi, known, unknown, urlPrefix, q, l)
+		writePropfindEntry(&out, dataDir, absPath, fi, known, unknown, urlPrefix, q, l, namesOnly)
 		if fi.IsDir() {
 			entries, _ := os.ReadDir(absPath)
 			for _, entry := range entries {
@@ -134,7 +134,7 @@ func handlePropfind(w http.ResponseWriter, r *http.Request, dataDir, urlPrefix, 
 				if err != nil {
 					continue
 				}
-				writePropfindEntry(&out, dataDir, childPath, childFI, known, unknown, urlPrefix, q, l)
+				writePropfindEntry(&out, dataDir, childPath, childFI, known, unknown, urlPrefix, q, l, namesOnly)
 			}
 		}
 	default: // infinity
@@ -145,7 +145,7 @@ func handlePropfind(w http.ResponseWriter, r *http.Request, dataDir, urlPrefix, 
 			if strings.HasPrefix(wfi.Name(), tmpPrefix) {
 				return nil
 			}
-			writePropfindEntry(&out, dataDir, walkPath, wfi, known, unknown, urlPrefix, q, l)
+			writePropfindEntry(&out, dataDir, walkPath, wfi, known, unknown, urlPrefix, q, l, namesOnly)
 			return nil
 		})
 	}
@@ -182,12 +182,25 @@ type lockProps struct {
 	now                  time.Time
 }
 
-func writePropfindEntry(b *strings.Builder, dataDir, absPath string, fi os.FileInfo, known, unknown []string, urlPrefix string, q quotaProps, l lockProps) {
+func writePropfindEntry(b *strings.Builder, dataDir, absPath string, fi os.FileInfo, known, unknown []string, urlPrefix string, q quotaProps, l lockProps, namesOnly bool) {
 	fp := buildFileProps(dataDir, absPath, fi)
 	// The lock name is relative to the user root, so taken before the prefix.
 	lockName := fp.Href
 	if urlPrefix != "" {
 		fp.Href = urlPrefix + fp.Href
+	}
+	// RFC 4918 §9.1: propname lists the names of the properties the resource
+	// has, without values.
+	if namesOnly {
+		b.WriteString("<d:response><d:href>" + hrefXML(fp.Href) + "</d:href><d:propstat><d:prop>")
+		for _, name := range known {
+			if _, ok := getPropValue(fp, name); ok {
+				b.WriteString("<d:" + name + "/>")
+			}
+		}
+		b.WriteString("<d:supportedlock/><d:lockdiscovery/>")
+		b.WriteString("</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>")
+		return
 	}
 	// RFC 4331 §3, §4 define the properties for collections. A file reports
 	// them as not found.
@@ -224,22 +237,22 @@ func writePropfindEntry(b *strings.Builder, dataDir, absPath string, fi os.FileI
 
 // parsePropfindProps parses the PROPFIND body and returns the known/unknown
 // property split. An empty or allprop body returns all known properties and
-// sets all.
-func parsePropfindProps(body []byte) (known, unknown []string, all bool) {
+// sets all. A propname body does the same and also sets namesOnly.
+func parsePropfindProps(body []byte) (known, unknown []string, all, namesOnly bool) {
 	if len(body) == 0 {
-		return allPropNames, nil, true
+		return allPropNames, nil, true, false
 	}
 	var pf propfindReq
 	if err := xml.Unmarshal(body, &pf); err != nil {
-		return allPropNames, nil, true
+		return allPropNames, nil, true, false
 	}
 	if pf.Allprop != nil || len(pf.Prop.Props) == 0 {
-		return allPropNames, nil, true
+		return allPropNames, nil, true, pf.Allprop == nil && pf.Propname != nil
 	}
 	var requested []string
 	for _, p := range pf.Prop.Props {
 		requested = append(requested, p.XMLName.Local)
 	}
 	known, unknown = splitRequested(requested)
-	return known, unknown, false
+	return known, unknown, false, false
 }
