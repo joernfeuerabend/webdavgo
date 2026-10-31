@@ -326,6 +326,10 @@ func serveDAV(w http.ResponseWriter, r *http.Request, h *webdav.Handler, absPath
 			return
 		}
 		defer done()
+		if r.Method == "PROPPATCH" {
+			servePropPatch(w, r, owner, name, key)
+			return
+		}
 		h.ServeHTTP(w, r)
 		return
 	case http.MethodPut, http.MethodDelete:
@@ -369,10 +373,14 @@ func serveDAV(w http.ResponseWriter, r *http.Request, h *webdav.Handler, absPath
 		h.ServeHTTP(w, r)
 		// Measured rather than derived from the status: a failed recursive
 		// delete may still have removed part of the tree.
-		settleQuota(owner, 0, treeSize(key)-before)
+		delta := treeSize(key) - before
 		if sr.status == http.StatusNoContent {
 			removed = []string{name}
+			delta -= removeDeadProps(owner, name)
+		} else {
+			delta -= pruneGoneDeadProps(owner, name)
 		}
+		settleQuota(owner, 0, delta)
 		return
 	}
 
@@ -553,18 +561,31 @@ func serveCopyMove(w http.ResponseWriter, r *http.Request, h *webdav.Handler, ab
 	if r.Method == "MOVE" {
 		h.ServeHTTP(w, r)
 		if s := davStatus(r); s == http.StatusCreated || s == http.StatusNoContent {
-			settleQuota(owner, 0, -dstBefore)
+			settleQuota(owner, 0, -dstBefore+relocateDeadProps(owner, srcName, dstName, false, true))
 			removed = []string{srcName, dstName}
+		} else {
+			// x/net removes an overwritten destination before the rename.
+			settleQuota(owner, 0, -pruneGoneDeadProps(owner, srcName, dstName))
 		}
 		return
 	}
 
+	zeroDepth := r.Header.Get("Depth") == "0"
 	var src int64
-	if fi, err := os.Stat(absPath); err == nil && (!fi.IsDir() || r.Header.Get("Depth") != "0") {
+	if fi, err := os.Stat(absPath); err == nil && (!fi.IsDir() || !zeroDepth) {
 		src = treeSize(absPath)
 	}
+	srcDead, err := deadPropsSize(owner, srcName, zeroDepth)
+	var dstDead int64
+	if err == nil {
+		dstDead, err = deadPropsSize(owner, dstName, false)
+	}
+	if err != nil {
+		serviceUnavailable(w, r, "dead property lookup failed", err)
+		return
+	}
 	var reserved int64
-	if grow := src - dstBefore; grow > 0 {
+	if grow := src + srcDead - dstBefore - dstDead; grow > 0 {
 		if err := reserveQuota(owner, grow); err != nil {
 			quotaRefused(w, r, owner, err)
 			return
@@ -572,10 +593,14 @@ func serveCopyMove(w http.ResponseWriter, r *http.Request, h *webdav.Handler, ab
 		reserved = grow
 	}
 	h.ServeHTTP(w, r)
-	settleQuota(owner, reserved, treeSize(dst)-dstBefore)
+	delta := treeSize(dst) - dstBefore
 	if s := davStatus(r); s == http.StatusCreated || s == http.StatusNoContent {
 		removed = []string{dstName}
+		delta += relocateDeadProps(owner, srcName, dstName, zeroDepth, false)
+	} else {
+		delta -= pruneGoneDeadProps(owner, dstName)
 	}
+	settleQuota(owner, reserved, delta)
 }
 
 // pathExists reports whether something is at absPath. An error other than a

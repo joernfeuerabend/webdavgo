@@ -101,6 +101,10 @@ type Config struct {
 	// unlimited; GB in the file. Existing users keep theirs.
 	DefaultQuota int64 `toml:"default_quota"`
 
+	// MaxDeadPropsSize is the largest total size of the dead properties of one
+	// resource in bytes, 0 for unlimited; KB in the file.
+	MaxDeadPropsSize int64 `toml:"max_dead_props_size"`
+
 	// AccessLog receives the "request" records and ServerLog every other
 	// record; empty means stdout (a development run). Only the service opens
 	// them.
@@ -388,10 +392,11 @@ var byteUnits = map[string]struct {
 	unit   string
 	factor int64
 }{
-	"max_request_body":  {"KB", 1000},
-	"body_min_rate":     {"KB/s", 1000},
-	"response_min_rate": {"KB/s", 1000},
-	"default_quota":     {"GB", 1_000_000_000},
+	"max_request_body":    {"KB", 1000},
+	"body_min_rate":       {"KB/s", 1000},
+	"response_min_rate":   {"KB/s", 1000},
+	"default_quota":       {"GB", 1_000_000_000},
+	"max_dead_props_size": {"KB", 1000},
 }
 
 // countUnits name the unit of a count that is stored as it is.
@@ -1063,6 +1068,9 @@ func (c Config) checkGeneral() []fieldError {
 	if c.DefaultQuota < 0 || c.DefaultQuota > maxQuotaGB*1_000_000_000 {
 		add("default_quota", "default_quota must be between 0 (unlimited) and %d GB", maxQuotaGB)
 	}
+	if c.MaxDeadPropsSize < 0 {
+		add("max_dead_props_size", "max_dead_props_size must not be negative")
+	}
 	if c.BruteforceMaxEntries <= 0 {
 		add("bruteforce_max_entries", "bruteforce_max_entries must be positive")
 	}
@@ -1229,6 +1237,7 @@ func (c Config) logAttrs() []any {
 		"health_bind", c.HealthBind,
 		"health_port", c.HealthPort,
 		"default_quota", c.DefaultQuota,
+		"max_dead_props_size", c.MaxDeadPropsSize,
 		"access_log", c.AccessLog,
 		"server_log", c.ServerLog,
 		"tls_mode", c.TLSMode,

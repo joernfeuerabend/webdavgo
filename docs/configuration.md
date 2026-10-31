@@ -44,6 +44,7 @@ as one `config` line.
 | `read_header_timeout` | `10` | seconds a client may take to send the request headers |
 | `idle_timeout` | `120` | seconds a keep-alive connection may stay idle |
 | `max_request_body` | `1000` | body limit in KB for every method except PUT, larger → 413 |
+| `max_dead_props_size` | `0` | maximum total size in KB of the dead properties of one resource, a PROPPATCH that would exceed it gets 507 (see [Dead properties](clients.md#dead-properties)). `0` = unlimited |
 | `allow_propfind_infinity` | `false` | allow PROPFIND `Depth: infinity` |
 | `max_connections` | `256` | simultaneous connections per listener, further ones wait |
 | `max_connections_per_ip` | `32` | simultaneous connections per client (IPv4 address, IPv6 /64) and listener. Further ones are closed right after accept (see [Per-client limits](#per-client-limits)) |

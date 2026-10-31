@@ -86,11 +86,34 @@ Warn: `admin session ended: sessions were revoked outside this process`).
 It works without the HTTP listeners (the service may keep running) and exits
 non-zero if the database cannot be opened or the user does not exist.
 
-`reset-totp` and `setup-info` never migrate the database schema. Only the
+`reset-totp`, `setup-info` and `prune-props` never migrate the database schema. Only the
 service does, at startup. If the database's schema version differs from the
 binary's, they refuse. After an update, restart the service first so it
 migrates the database. An older binary than the database gives the usual
 "newer than binary target" error.
+
+## Dead properties and `prune-props`
+
+[Dead properties](clients.md#dead-properties) are stored in the database, in
+the table `dead_props`, so a file backup alone does not contain them. Requests
+through webdavgo keep the entries in step with the files. Files removed or
+renamed outside webdavgo leave entries behind, which still count toward the
+owner's quota. To delete the entries whose path no longer exists, run on the
+server, with the same `-config` / `-data-dir` as the service:
+
+```sh
+sudo -u webdavgo webdavgo prune-props                 # everything
+sudo -u webdavgo webdavgo prune-props alice/projects  # one directory
+```
+
+The directory is relative to `<data_dir>/users`, starting with the username, or an
+absolute path below it. It need not exist any more. Only entries at or below it
+are considered. The result is logged as `dead properties pruned` with `users`,
+`paths` and `bytes`. The service may keep running. It sees the freed bytes in the
+quota after its next restart, when it recounts usage.
+
+A renamed file loses its properties when the entries are pruned, and a file
+created later at a path that still has entries gets them back.
 
 ## Sessions, CSRF and headers
 
@@ -236,7 +259,7 @@ when the config does not set them. An empty value (`""`) sends those records
 to stdout instead. A missing log directory is created (0750) before the
 files are opened. If that fails, the server exits with an error naming the
 directory and the reason. Only the server writes the files: `setup-info`,
-`reset-totp`, `install` and `uninstall` always log to the terminal.
+`reset-totp`, `prune-props`, `install` and `uninstall` always log to the terminal.
 
 **journald still matters.** Records from before the config is loaded, and,
 with `server_log` set, a copy of every Error record go to stdout/stderr and so

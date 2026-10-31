@@ -114,6 +114,10 @@ curl -X SEARCH \
 MOVE/COPY destinations must start with `/s/<same_share_id>/`. Cross-share or
 absolute destinations return 403.
 
+PROPPATCH and PROPFIND act on the owner's
+[dead properties](clients.md#dead-properties), on the same paths as the owner
+endpoint, and their size counts toward the owner's quota.
+
 ## Locks
 
 Recipients cannot create, refresh or remove locks, but their writes respect

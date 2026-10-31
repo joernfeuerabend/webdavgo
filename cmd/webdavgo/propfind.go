@@ -88,8 +88,11 @@ func handlePropfind(w http.ResponseWriter, r *http.Request, dataDir, urlPrefix, 
 	// and these two are defined there. They stay out of allPropNames because
 	// that list also serves SEARCH.
 	l := lockProps{locks: locks, now: time.Now(), supported: all, discovery: all}
-	unknown = slices.DeleteFunc(unknown, func(name string) bool {
-		switch name {
+	unknown = slices.DeleteFunc(unknown, func(name xml.Name) bool {
+		if name.Space != davNamespace {
+			return false
+		}
+		switch name.Local {
 		case "supportedlock":
 			l.supported = true
 		case "lockdiscovery":
@@ -104,9 +107,9 @@ func handlePropfind(w http.ResponseWriter, r *http.Request, dataDir, urlPrefix, 
 	// account-wide usage, which is none of the recipient's business. The
 	// available bytes are kept, so clients can still tell a full quota.
 	isShare := urlPrefix != ""
-	unknown = slices.DeleteFunc(unknown, func(name string) bool {
-		if name == "quota-available-bytes" || name == "quota-used-bytes" && !isShare {
-			q.names = append(q.names, name)
+	unknown = slices.DeleteFunc(unknown, func(name xml.Name) bool {
+		if name.Space == davNamespace && (name.Local == "quota-available-bytes" || name.Local == "quota-used-bytes" && !isShare) {
+			q.names = append(q.names, name.Local)
 			return true
 		}
 		return false
@@ -118,13 +121,23 @@ func handlePropfind(w http.ResponseWriter, r *http.Request, dataDir, urlPrefix, 
 		}
 	}
 
+	// A share reads the owner's entries, so the names start at the owner's root.
+	dead := deadPropsView{all: all, root: userLocks(owner).nameOf(dataDir)}
+	if all || len(unknown) > 0 {
+		dead.byPath, err = loadDeadProps(owner, path.Join(dead.root, cleanURL), depth == "0")
+		if err != nil {
+			serviceUnavailable(w, r, "dead property lookup failed", err)
+			return
+		}
+	}
+
 	var out strings.Builder
 
 	switch depth {
 	case "0":
-		writePropfindEntry(&out, dataDir, absPath, fi, known, unknown, urlPrefix, q, l, namesOnly)
+		writePropfindEntry(&out, dataDir, absPath, fi, known, unknown, urlPrefix, q, l, dead, namesOnly)
 	case "1":
-		writePropfindEntry(&out, dataDir, absPath, fi, known, unknown, urlPrefix, q, l, namesOnly)
+		writePropfindEntry(&out, dataDir, absPath, fi, known, unknown, urlPrefix, q, l, dead, namesOnly)
 		if fi.IsDir() {
 			entries, _ := os.ReadDir(absPath)
 			for _, entry := range entries {
@@ -136,7 +149,7 @@ func handlePropfind(w http.ResponseWriter, r *http.Request, dataDir, urlPrefix, 
 				if err != nil {
 					continue
 				}
-				writePropfindEntry(&out, dataDir, childPath, childFI, known, unknown, urlPrefix, q, l, namesOnly)
+				writePropfindEntry(&out, dataDir, childPath, childFI, known, unknown, urlPrefix, q, l, dead, namesOnly)
 			}
 		}
 	default: // infinity
@@ -147,7 +160,7 @@ func handlePropfind(w http.ResponseWriter, r *http.Request, dataDir, urlPrefix, 
 			if strings.HasPrefix(wfi.Name(), tmpPrefix) {
 				return nil
 			}
-			writePropfindEntry(&out, dataDir, walkPath, wfi, known, unknown, urlPrefix, q, l, namesOnly)
+			writePropfindEntry(&out, dataDir, walkPath, wfi, known, unknown, urlPrefix, q, l, dead, namesOnly)
 			return nil
 		})
 	}
@@ -184,10 +197,11 @@ type lockProps struct {
 	now                  time.Time
 }
 
-func writePropfindEntry(b *strings.Builder, dataDir, absPath string, fi os.FileInfo, known, unknown []string, urlPrefix string, q quotaProps, l lockProps, namesOnly bool) {
+func writePropfindEntry(b *strings.Builder, dataDir, absPath string, fi os.FileInfo, known []string, unknown []xml.Name, urlPrefix string, q quotaProps, l lockProps, dead deadPropsView, namesOnly bool) {
 	fp := buildFileProps(dataDir, absPath, fi)
 	// The lock name is relative to the user root, so taken before the prefix.
 	lockName := fp.Href
+	deadProps := dead.byPath[path.Join(dead.root, fp.Href)]
 	if urlPrefix != "" {
 		fp.Href = urlPrefix + fp.Href
 	}
@@ -209,13 +223,11 @@ func writePropfindEntry(b *strings.Builder, dataDir, absPath string, fi os.FileI
 				b.WriteString("<d:quota-used-bytes/>")
 			}
 		}
+		for _, p := range deadProps {
+			writeDeadPropName(b, p.Name)
+		}
 		b.WriteString("</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>")
 		return
-	}
-	// RFC 4331 §3, §4 define the properties for collections. A file reports
-	// them as not found.
-	if !fi.IsDir() && len(q.names) > 0 {
-		unknown = append(slices.Clone(unknown), q.names...)
 	}
 	b.WriteString("<d:response><d:href>" + hrefXML(fp.Href) + "</d:href><d:propstat><d:prop>")
 	for _, name := range known {
@@ -240,8 +252,30 @@ func writePropfindEntry(b *strings.Builder, dataDir, absPath string, fi os.FileI
 		}
 		writeLockDiscovery(b, active, l.now)
 	}
+	if dead.all {
+		for _, p := range deadProps {
+			writeDeadProp(b, p)
+		}
+	}
+	var notFound []xml.Name
+	for _, name := range unknown {
+		i := slices.IndexFunc(deadProps, func(p deadProp) bool { return p.Name == name })
+		switch {
+		case i < 0:
+			notFound = append(notFound, name)
+		case !dead.all:
+			writeDeadProp(b, deadProps[i])
+		}
+	}
+	// RFC 4331 §3, §4 define the properties for collections. A file reports
+	// them as not found.
+	if !fi.IsDir() {
+		for _, name := range q.names {
+			notFound = append(notFound, xml.Name{Space: davNamespace, Local: name})
+		}
+	}
 	b.WriteString("</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>")
-	writePropstatNotFound(b, unknown)
+	writePropstatNotFoundNames(b, notFound)
 	b.WriteString("</d:response>")
 }
 
@@ -254,7 +288,7 @@ func writePropfindEntry(b *strings.Builder, dataDir, absPath string, fi os.FileI
 // The body is walked token by token because xml.Unmarshal stops at the end of
 // the root element and skips what it has no field for, so it would miss
 // trailing content and errors inside ignored elements.
-func parsePropfindProps(body []byte) (known, unknown []string, all, namesOnly bool, err error) {
+func parsePropfindProps(body []byte) (known []string, unknown []xml.Name, all, namesOnly bool, err error) {
 	text, hasBOM, err := stripPropfindBOM(body)
 	if err != nil {
 		return nil, nil, false, false, err
@@ -270,8 +304,8 @@ func parsePropfindProps(body []byte) (known, unknown []string, all, namesOnly bo
 		sawRoot         bool
 		form            string
 		sawInclude      bool
-		props, included []string
-		collect         *[]string // receives the children of the current depth 1 element
+		props, included []xml.Name
+		collect         *[]xml.Name // receives the children of the current depth 1 element
 	)
 	for {
 		offset := dec.InputOffset()
@@ -320,7 +354,7 @@ func parsePropfindProps(body []byte) (known, unknown []string, all, namesOnly bo
 				}
 			case 2:
 				if collect != nil {
-					*collect = append(*collect, t.Name.Local)
+					*collect = append(*collect, t.Name)
 				}
 			}
 			depth++
@@ -358,12 +392,12 @@ func parsePropfindProps(body []byte) (known, unknown []string, all, namesOnly bo
 		// An empty prop names no properties, so unlike a missing body it is
 		// not allprop. Each response then carries an empty prop with 200 OK,
 		// since RFC 4918 §14.24 requires at least one propstat.
-		known, unknown = splitRequested(props)
+		known, unknown = splitRequestedNames(props)
 		return known, unknown, false, false, nil
 	case "allprop":
 		// RFC 4918 §9.1: include adds to allprop. Every known property is
 		// already in allprop, so only the others are left to answer.
-		_, unknown = splitRequested(included)
+		_, unknown = splitRequestedNames(included)
 		return allPropNames, unknown, true, false, nil
 	case "propname":
 		return allPropNames, nil, true, true, nil

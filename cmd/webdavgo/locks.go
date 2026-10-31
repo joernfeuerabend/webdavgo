@@ -905,7 +905,7 @@ func extractLockOwner(dec *xml.Decoder) (string, error) {
 			}
 			scopes = append(scopes, scope)
 			if len(scopes) == 2 && t.Name.Local == "owner" && lookup(t.Name.Space) == "DAV:" {
-				return serializeOwner(dec, t, lookup)
+				return serializeElement(dec, t, lookup)
 			}
 		case xml.EndElement:
 			scopes = scopes[:len(scopes)-1]
@@ -913,9 +913,10 @@ func extractLockOwner(dec *xml.Decoder) (string, error) {
 	}
 }
 
-// serializeOwner writes the owner element that starts with start, reading the
-// rest of it from dec. lookup resolves a prefix in scope at start.
-func serializeOwner(dec *xml.Decoder, start xml.StartElement, lookup func(string) string) (string, error) {
+// serializeElement writes the element that starts with start as a self-contained
+// element, reading the rest of it from dec. lookup resolves a prefix in scope at
+// start.
+func serializeElement(dec *xml.Decoder, start xml.StartElement, lookup func(string) string) (string, error) {
 	var inner strings.Builder
 	used := map[string]bool{start.Name.Space: true}
 	for _, a := range start.Attr {

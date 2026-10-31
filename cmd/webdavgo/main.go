@@ -73,6 +73,7 @@ var adminFingerprint string
 var version = "dev"
 
 const usage = "webdavgo [flags] | webdavgo reset-totp [flags] <username> | webdavgo setup-info [flags] | " +
+	"webdavgo prune-props [flags] [directory] | " +
 	"webdavgo healthcheck [-config file] | webdavgo install [-root dir] | webdavgo uninstall [-root dir] [-purge [-yes]]"
 
 func main() {
@@ -96,7 +97,7 @@ func main() {
 		}
 	}
 	command := ""
-	if len(args) > 0 && (args[0] == "reset-totp" || args[0] == "setup-info") {
+	if len(args) > 0 && (args[0] == "reset-totp" || args[0] == "setup-info" || args[0] == "prune-props") {
 		command, args = args[0], args[1:]
 	}
 	c, rest, err := loadConfig(args, command == "")
@@ -110,6 +111,8 @@ func main() {
 		os.Exit(runResetTOTP(rest))
 	case "setup-info":
 		os.Exit(runSetupInfo(rest))
+	case "prune-props":
+		os.Exit(runPruneProps(rest))
 	}
 	if len(rest) > 0 {
 		logger.Error("unknown command", "command", rest[0], "usage", usage)

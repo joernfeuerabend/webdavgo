@@ -444,9 +444,13 @@ func reconcileUsage() error {
 	if err != nil {
 		return fmt.Errorf("list users: %w", err)
 	}
+	dead, err := deadPropsTotals()
+	if err != nil {
+		return fmt.Errorf("sum dead properties: %w", err)
+	}
 	corrected := 0
 	for _, u := range users {
-		n := treeSize(userDataRoot(u.Username))
+		n := treeSize(userDataRoot(u.Username)) + dead[u.Username]
 		if n == u.UsedBytes {
 			continue
 		}
