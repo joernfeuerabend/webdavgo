@@ -678,6 +678,11 @@ func servePropPatch(w http.ResponseWriter, r *http.Request, owner, name, absPath
 	if fi.IsDir() && href != "/" {
 		href += "/"
 	}
+	if len(ops) == 0 {
+		// §14.24 requires at least one propstat, as for an empty prop in PROPFIND.
+		writePropPatchResponse(w, href, "<d:propstat><d:prop/><d:status>HTTP/1.1 200 OK</d:status></d:propstat>")
+		return
+	}
 	if slices.ContainsFunc(ops, func(op propPatchOp) bool { return isProtectedProp(op.prop.Name) }) {
 		writePropPatchFailure(w, href, ops, func(op propPatchOp) bool { return isProtectedProp(op.prop.Name) },
 			"403 Forbidden", "<d:error><d:cannot-modify-protected-property/></d:error>")
@@ -837,8 +842,8 @@ func writePropPatchResponse(w http.ResponseWriter, href, propstats string) {
 
 // parsePropertyUpdate parses a PROPPATCH body (§14.19) as strictly as a PROPFIND
 // body. Elements it does not know are ignored (§17). §14.19 requires at least one
-// set or remove, and one that names no property has nothing to apply, so a body
-// without any property is an error.
+// set or remove, so a body without one is an error. §14.18 allows any content in
+// prop, so one that names no property is valid and returns no instruction.
 func parsePropertyUpdate(body []byte) ([]propPatchOp, error) {
 	text, hasBOM, err := stripPropfindBOM(body)
 	if err != nil {
@@ -850,14 +855,7 @@ func parsePropertyUpdate(body []byte) ([]propPatchOp, error) {
 	if err := checkPropfindPrefixes(newXMLBodyDecoder(text, hasBOM)); err != nil {
 		return nil, err
 	}
-	ops, err := extractPropPatchOps(newXMLBodyDecoder(text, hasBOM))
-	if err != nil {
-		return nil, err
-	}
-	if len(ops) == 0 {
-		return nil, errors.New("no property in <propertyupdate>")
-	}
-	return ops, nil
+	return extractPropPatchOps(newXMLBodyDecoder(text, hasBOM))
 }
 
 // checkPropertyUpdate checks that the body is well-formed and has the right root.
@@ -920,6 +918,7 @@ func extractPropPatchOps(dec *xml.Decoder) ([]propPatchOp, error) {
 		remove bool
 		inSet  bool // inside a DAV:set or DAV:remove
 		inProp bool // inside the DAV:prop of one
+		sawOp  bool // a DAV:set or DAV:remove was seen
 	)
 	lookup := func(prefix string) string {
 		if prefix == "xml" {
@@ -935,6 +934,9 @@ func extractPropPatchOps(dec *xml.Decoder) ([]propPatchOp, error) {
 	for {
 		tok, err := dec.RawToken()
 		if err == io.EOF {
+			if !sawOp {
+				return nil, errors.New("no <set> or <remove> in <propertyupdate>")
+			}
 			return ops, nil
 		}
 		if err != nil {
@@ -964,6 +966,7 @@ func extractPropPatchOps(dec *xml.Decoder) ([]propPatchOp, error) {
 			case 2:
 				inSet = isDAV && (t.Name.Local == "set" || t.Name.Local == "remove")
 				remove = t.Name.Local == "remove"
+				sawOp = sawOp || inSet
 			case 3:
 				inProp = inSet && isDAV && t.Name.Local == "prop"
 			case 4:
