@@ -557,15 +557,15 @@ S11=$(curl -s -o /dev/null -w "%{http_code}" -X SEARCH \
 if [[ "$S11" == "400" ]]; then check "C11: gt on string property → 400" pass
 else check "C11: gt on string property → 400 (got $S11)" fail; fi
 
-# ---- C58: fresh start → user_version equals target_version (3) ---------------
+# ---- C58: fresh start → user_version equals target_version (5) ---------------
 UV58=$(sqlite3 "$TEST_DB" "PRAGMA user_version;" 2>/dev/null || echo -1)
-if [[ "$UV58" == "3" ]]; then
-    check "C58: fresh start → PRAGMA user_version == 3 (target)" pass
+if [[ "$UV58" == "5" ]]; then
+    check "C58: fresh start → PRAGMA user_version == 5 (target)" pass
 else
-    check "C58: user_version after fresh start (got $UV58, want 3)" fail
+    check "C58: user_version after fresh start (got $UV58, want 5)" fail
 fi
 
-# ---- Criterion 12: v1→v3 migration (stop → set v1 + plant tombstones → restart → verify) --
+# ---- Criterion 12: v1→v5 migration (stop → set v1 + plant tombstones → restart → verify) --
 # Simulate a DB stuck at schema v1. On restart the v2 migration must drop tombstones.
 stop_server
 sqlite3 "$TEST_DB" \
@@ -579,8 +579,8 @@ sleep 0.5
 TOMB_TABLE=$(sqlite3 "$TEST_DB" ".tables" 2>/dev/null | tr -s '[:space:]' '\n' \
     | grep -c '^tombstones$' || true)
 VER12=$(sqlite3 "$TEST_DB" "PRAGMA user_version;" 2>/dev/null || echo -1)
-if [[ "$TOMB_TABLE" == "0" && "$VER12" == "3" ]]; then
-    check "C12: v1→v3 migration drops tombstones, user_version now 3" pass
+if [[ "$TOMB_TABLE" == "0" && "$VER12" == "5" ]]; then
+    check "C12: v1→v5 migration drops tombstones, user_version now 5" pass
 else
     check "C12: tombstones migration (tomb=$TOMB_TABLE ver=$VER12)" fail
 fi
@@ -1880,15 +1880,15 @@ sleep 0.5
 UV59=$(sqlite3 "$TEST_DB" "PRAGMA user_version;" 2>/dev/null || echo -1)
 ADMIN59=$(sqlite3 "$TEST_DB" \
     "SELECT COUNT(*) FROM users WHERE username='admin';" 2>/dev/null || echo 0)
-if [[ "$UV59" == "3" && "$ADMIN59" == "1" ]]; then
-    check "C59: downgrade v0→v3: user_version=3, admin user preserved" pass
+if [[ "$UV59" == "5" && "$ADMIN59" == "1" ]]; then
+    check "C59: downgrade v0→v5: user_version=5, admin user preserved" pass
 else
     check "C59: migration from v0 (ver=$UV59 admin=$ADMIN59)" fail
 fi
 # Re-authenticate after restart.
 login_admin
 
-# ---- C60: backup file bak-v0-* created before the v0→v3 migration -----------
+# ---- C60: backup file bak-v0-* created before the v0→v5 migration -----------
 BAK60=$(ls "$DATA_DIR"/webdavgo.db.bak-v0-* 2>/dev/null | wc -l | tr -d ' ')
 if [[ "$BAK60" -ge 1 ]]; then
     check "C60: backup file webdavgo.db.bak-v0-* exists after migration" pass
@@ -1898,7 +1898,7 @@ fi
 
 # ---- C61: DB version newer than binary → server refuses to start ------------
 stop_server
-sqlite3 "$TEST_DB" "PRAGMA user_version = 4;" 2>/dev/null
+sqlite3 "$TEST_DB" "PRAGMA user_version = 6;" 2>/dev/null
 FAIL_STDOUT="/tmp/webdavgo_newer_fail.txt"
 (cd "$TEST_DIR" && exec ./webdavgo -config "$CONFIG_FILE") >"$FAIL_STDOUT" 2>&1 &
 FAIL_PID=$!
@@ -1919,7 +1919,7 @@ else
 fi
 rm -f "$FAIL_STDOUT"
 # Restore and restart so the C52 regression can run.
-sqlite3 "$TEST_DB" "PRAGMA user_version = 3;" 2>/dev/null
+sqlite3 "$TEST_DB" "PRAGMA user_version = 5;" 2>/dev/null
 start_server
 sleep 0.5
 login_admin
