@@ -33,6 +33,7 @@ To get a server running, see [Quick start](#quick-start).
   `not`, comparisons, `like`, `contains`, `orderby` and `limit`
 - Conditional requests (`If-Match`, `If-None-Match`), atomic PUT and
   consistent ETags
+- Dead properties (PROPPATCH) stored in the database
 - Standard WebDAV without client-specific extensions
 
 **Users & sharing**

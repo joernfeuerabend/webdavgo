@@ -925,7 +925,7 @@ func TestIfHeaderEvaluation(t *testing.T) {
 }
 
 func TestWriteRequiresToken(t *testing.T) {
-	proppatch := `<?xml version="1.0"?><D:propertyupdate xmlns:D="DAV:"/>`
+	proppatch := `<?xml version="1.0"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><x:note xmlns:x="urn:example:test">v</x:note></D:prop></D:set></D:propertyupdate>`
 	tests := []struct {
 		name, method, target, body string
 		lock, depth                string
@@ -943,6 +943,10 @@ func TestWriteRequiresToken(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			lockTestEnv(t)
+			// dead_props references users, so a stored property needs the owner's row.
+			if _, err := db.Exec(`INSERT INTO users (username, password_hash, role) VALUES (?, 'x', 'user')`, lockTestOwner); err != nil {
+				t.Fatal(err)
+			}
 			token := takeLock(t, tt.lock, "exclusive", tt.depth)
 			wantStatus(t, "without token", ownerDo(tt.method, tt.target, tt.body, nil), http.StatusLocked)
 			hdr := map[string]string{"If": "<" + tt.lock + "> (<" + token + ">)"}

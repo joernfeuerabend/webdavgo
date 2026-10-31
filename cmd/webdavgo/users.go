@@ -11,8 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"math"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -380,6 +382,8 @@ func reserveQuota(username string, n int64) error {
 // made, which may be negative. The database is updated by increment, so
 // concurrent writers cannot overwrite each other's change.
 func settleQuota(username string, reserved, delta int64) {
+	usageReload.RLock()
+	defer usageReload.RUnlock()
 	storageUsage.mu.Lock()
 	if u := storageUsage.m[username]; u != nil {
 		u.reserved -= reserved
@@ -394,6 +398,70 @@ func settleQuota(username string, reserved, delta int64) {
 		// Only the stored copy is off; reconcileUsage fixes it at the next start.
 		logger.Error("cannot store storage usage", "user", username, "delta", delta, "err", err)
 	}
+}
+
+// usageEpochKey is the settings key a separate process bumps after changing
+// used_bytes, which storageUsage would otherwise not notice before a restart.
+const usageEpochKey = "usage_epoch"
+
+// usageReload keeps a reload of storageUsage from reading a row that a settleQuota
+// has already booked in memory but not yet stored. seen is the epoch the mirror
+// reflects.
+var usageReload struct {
+	sync.RWMutex
+	seen string
+}
+
+// bumpUsageEpoch tells every process sharing the database to read used_bytes again.
+func bumpUsageEpoch() error {
+	_, err := db.Exec(`INSERT INTO settings (key, value) VALUES (?, '1')
+		ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1`, usageEpochKey)
+	if err != nil {
+		return fmt.Errorf("bump usage epoch: %w", err)
+	}
+	return nil
+}
+
+// syncUsageEpoch reloads the committed usage of the loaded users if the epoch has
+// changed. It runs once per request that can change usage or reports it, not in
+// reserveQuota, which a chunked upload calls for every chunk. Reservations stay:
+// they belong to writes of this process. A failure is logged, and the next request
+// tries again.
+func syncUsageEpoch() {
+	epoch, _, err := storedSetting(usageEpochKey)
+	if err != nil {
+		logger.Warn("cannot read usage epoch", "err", err)
+		return
+	}
+	usageReload.RLock()
+	current := epoch == usageReload.seen
+	usageReload.RUnlock()
+	if current {
+		return
+	}
+	usageReload.Lock()
+	defer usageReload.Unlock()
+	storageUsage.mu.Lock()
+	users := slices.Collect(maps.Keys(storageUsage.m))
+	storageUsage.mu.Unlock()
+	for _, username := range users {
+		var used int64
+		err := db.QueryRow(`SELECT used_bytes FROM user_quota WHERE username = ?`, username).Scan(&used)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			logger.Warn("cannot reload storage usage", "user", username, "err", err)
+			return
+		}
+		storageUsage.mu.Lock()
+		if u := storageUsage.m[username]; u != nil {
+			u.used = used
+		}
+		storageUsage.mu.Unlock()
+	}
+	usageReload.seen = epoch
+	logger.Debug("storage usage reloaded", "users", len(users))
 }
 
 // setUserQuota changes the quota of username in bytes; 0 means unlimited.
@@ -414,6 +482,7 @@ func setUserQuota(username string, quota int64) error {
 // still available. For an unlimited user the available bytes are the free
 // space of the filesystem holding the data directory.
 func quotaStatus(username string) (available, used int64, err error) {
+	syncUsageEpoch()
 	storageUsage.mu.Lock()
 	u, err := usageLocked(username)
 	var quota int64
@@ -444,9 +513,13 @@ func reconcileUsage() error {
 	if err != nil {
 		return fmt.Errorf("list users: %w", err)
 	}
+	dead, err := deadPropsTotals()
+	if err != nil {
+		return fmt.Errorf("sum dead properties: %w", err)
+	}
 	corrected := 0
 	for _, u := range users {
-		n := treeSize(userDataRoot(u.Username))
+		n := treeSize(userDataRoot(u.Username)) + dead[u.Username]
 		if n == u.UsedBytes {
 			continue
 		}

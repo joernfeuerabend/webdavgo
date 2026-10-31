@@ -92,16 +92,17 @@ on **Admin → Users** (when adding a user, or per user with *Set quota*),
 which also shows each user's usage and the totals: used by all users, and
 size and free space of the filesystem holding the data directory.
 
-Usage is the total size of the user's files. It is kept in the database,
+Usage is the total size of the user's files and dead properties. It is kept in the database,
 updated with every write, and recounted from disk at every start, so a
 counter that drifted is correct again after a restart.
 
 | Request | Effect on usage |
 |---------|-----------------|
 | PUT | the growth: new size minus the size of the file it replaces |
-| COPY | the size of the copied file or tree, minus what an overwritten destination held |
+| PROPPATCH | the change in the size of the resource's dead properties |
+| COPY | the size of the copied file or tree and its dead properties, minus what an overwritten destination held |
 | MOVE | none, except that an overwritten destination is freed |
-| DELETE | the size of the deleted file or tree is freed |
+| DELETE | the size of the deleted file or tree and its dead properties is freed |
 
 A write that would pass the quota gets `507 Insufficient Storage` with the
 RFC 4331 `DAV:quota-not-exceeded` error body. With a `Content-Length` it is
@@ -119,6 +120,68 @@ the owner's remaining quota. `quota-used-bytes` is answered as not found
 (404 propstat), since the owner's total usage is no business of the
 recipient.
 
+## Dead properties
+
+PROPPATCH (RFC 4918 §9.2) sets and removes dead properties on files and
+collections. They live in the database, per owner and path. A share acts on the
+owner's entries, on the same paths as the owner endpoint.
+
+Instructions apply in document order, and a request applies completely or not at
+all. Removing a property that does not exist is not an error.
+
+| PROPPATCH | Answer |
+|-----------|--------|
+| applied | 207, every named property with 200 |
+| names a live property | 207 and nothing changes: the live property with 403 and `cannot-modify-protected-property`, every other one with 424 |
+| would pass the owner's quota | 207 and nothing changes: properties that could not be stored with 507 and `DAV:quota-not-exceeded`, every other one with 424 |
+| would pass `max_dead_props_size` for the resource | 207 and nothing changes: properties that could not be stored with 507, every other one with 424 |
+| resource does not exist, or removed while the request waited | 404 |
+| a `set` or `remove` with an empty `prop` | 207 with an empty `prop` and 200, nothing changes |
+| not well-formed XML, or root other than `DAV:propertyupdate` | 400 |
+| no `set` or `remove` (RFC 4918 §14.19), also when only unexpected elements are there | 400 |
+| a `set` or `remove` without exactly one `prop` (§14.23, §14.26) | 400 |
+| a property element in a `remove` that is not empty, including whitespace or a comment (§14.23) | 400 |
+| text in `prop` (§14.18), `set`, `remove` or `propertyupdate`, other than whitespace | 400 |
+
+Other elements and attributes outside a property value are ignored, with everything
+inside such an element (RFC 4918 §17). A property value in a `set` keeps all its XML
+elements.
+
+The protected properties are `getlastmodified`, `getetag`, `getcontentlength`,
+`getcontenttype`, `resourcetype`, `creationdate`, `supportedlock`, `lockdiscovery`,
+`quota-available-bytes` and `quota-used-bytes`, all in `DAV:`.
+
+The properties that could not be stored are those set to a value larger than the
+one they hold now. A set that does not grow and a remove get 424. The two 507 checks
+refuse growth only, so properties can always be removed.
+
+`DAV:displayname` is not protected (RFC 4918 §15.2). A value set with PROPPATCH is
+returned by PROPFIND and SEARCH, and SEARCH compares and sorts by it, instead of the
+name derived from the file name. Removing it restores the derived name. It counts
+toward the quota and `max_dead_props_size`, and DELETE, MOVE and COPY treat it like
+a dead property, so a moved resource keeps a set name.
+
+A PROPPATCH does not run at the same time as a DELETE, COPY or MOVE of the resource
+or of an ancestor. It waits for those to finish, and they wait for a PROPPATCH that
+is already running. This also holds across the user endpoint and shares.
+
+The size of a property is the bytes of its namespace, local name, `xml:lang` and
+value. A value keeps its child elements, mixed content, namespaces and the
+`xml:lang` in scope. The prefixes may differ in the response, and other attributes
+of the property element are not kept.
+
+PROPFIND identifies a property by namespace and local name, so `getetag` without
+the `DAV:` namespace is not the live property. It returns a requested dead property
+with its value, `allprop` returns all of them and `propname` lists their names.
+SEARCH does not return dead properties, other than a set `displayname`.
+
+| Request | Dead properties |
+|---------|-----------------|
+| PUT on an existing resource | kept |
+| DELETE | those of the resource and everything below it are removed |
+| MOVE | follow the resource and everything below it, those of an overwritten destination are removed |
+| COPY | are copied with the resource and everything below it (with Depth 0 only those of the collection itself), those of an overwritten destination are removed |
+
 ## PROPFIND request bodies
 
 The same rules apply on the user endpoint and on shares.
@@ -128,7 +191,7 @@ The same rules apply on the user endpoint and on shares.
 | empty or only whitespace | 207, as `allprop` (RFC 4918 §9.1) |
 | `prop` | 207 with the named properties |
 | empty `prop` | 207, each response carries an empty `prop` with 200 OK |
-| `allprop` | 207 with all properties except the quota properties |
+| `allprop` | 207 with all properties, dead ones included, except the quota properties |
 | `allprop` and `include`, in either order | 207 with `allprop` and the included properties, for example the quota properties |
 | `propname` | 207 with property names only |
 | not well-formed XML, including content after the root element | 400 (RFC 4918 §8.2) |
@@ -153,7 +216,8 @@ resource (404) take precedence over a 400 for the body.
 `propname` returns the names of the properties a resource has, without values
 (RFC 4918 §9.1), on the user endpoint and on shares. On a collection this
 includes `quota-available-bytes` and, except on shares, `quota-used-bytes`
-(RFC 4331 §2), although `allprop` leaves them out.
+(RFC 4331 §2), although `allprop` leaves them out. It also lists the resource's
+dead properties.
 
 ## Locks
 
