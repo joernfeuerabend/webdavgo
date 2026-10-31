@@ -624,7 +624,7 @@ func buildWebDAVHandler() http.Handler {
 
 		switch r.Method {
 		case "SEARCH":
-			handleSearch(rw, r, root, "")
+			handleSearch(rw, r, root, "", username)
 		case "PROPFIND":
 			handlePropfind(rw, r, root, "", username, userLocks(username))
 		default:

@@ -109,8 +109,9 @@ sudo -u webdavgo webdavgo prune-props alice/projects  # one directory
 The directory is relative to `<data_dir>/users`, starting with the username, or an
 absolute path below it. It need not exist any more. Only entries at or below it
 are considered. The result is logged as `dead properties pruned` with `users`,
-`paths` and `bytes`. The service may keep running. It sees the freed bytes in the
-quota after its next restart, when it recounts usage.
+`paths` and `bytes`. The service may keep running: when bytes were freed, the command
+raises a usage epoch in the database, and the service reads the usage again at its
+next write or quota query, so they are available at once.
 
 A renamed file loses its properties when the entries are pruned, and a file
 created later at a path that still has entries gets them back.

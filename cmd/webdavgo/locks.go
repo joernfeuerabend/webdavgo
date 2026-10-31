@@ -88,10 +88,68 @@ type lockManager struct {
 	mu     sync.Mutex
 	locks  map[string]*activeLock // by token
 	writes []runningWrite
+
+	// A path lock only covers its exact path, but a DELETE, COPY or MOVE acts on
+	// a whole tree. treeOps and patches hold the names of those running and of
+	// the PROPPATCH requests running, so one cannot write an entry for a path the
+	// other is removing or relocating. COPY counts too: its source entries are
+	// read after the files were copied. They have their own mutex, because a tree
+	// operation runs far longer than mu may be held.
+	treeMu   sync.Mutex
+	treeDone *sync.Cond
+	treeOps  []string
+	patches  []string
 }
 
 func newLockManager(root string) *lockManager {
-	return &lockManager{root: root, locks: map[string]*activeLock{}}
+	m := &lockManager{root: root, locks: map[string]*activeLock{}}
+	m.treeDone = sync.NewCond(&m.treeMu)
+	return m
+}
+
+// beginTreeOp registers a DELETE, COPY or MOVE of the named trees and waits for the
+// PROPPATCH requests at or below them. It registers before waiting, so a steady
+// stream of PROPPATCH requests cannot starve it. The returned function ends it.
+// Tree operations do not wait for each other here, and neither side waits while
+// running, so this cannot deadlock with the path locks the callers already hold.
+func (m *lockManager) beginTreeOp(names ...string) func() {
+	m.treeMu.Lock()
+	defer m.treeMu.Unlock()
+	m.treeOps = append(m.treeOps, names...)
+	for slices.ContainsFunc(m.patches, func(p string) bool {
+		return slices.ContainsFunc(names, func(name string) bool { return p == name || isBelow(p, name) })
+	}) {
+		m.treeDone.Wait()
+	}
+	return func() {
+		m.treeMu.Lock()
+		defer m.treeMu.Unlock()
+		for _, name := range names {
+			if i := slices.Index(m.treeOps, name); i >= 0 {
+				m.treeOps = slices.Delete(m.treeOps, i, i+1)
+			}
+		}
+		m.treeDone.Broadcast()
+	}
+}
+
+// enterPropPatch waits until no tree operation covers name and registers a
+// PROPPATCH on it. The returned function ends it.
+func (m *lockManager) enterPropPatch(name string) func() {
+	m.treeMu.Lock()
+	defer m.treeMu.Unlock()
+	for slices.ContainsFunc(m.treeOps, func(op string) bool { return name == op || isBelow(name, op) }) {
+		m.treeDone.Wait()
+	}
+	m.patches = append(m.patches, name)
+	return func() {
+		m.treeMu.Lock()
+		defer m.treeMu.Unlock()
+		if i := slices.Index(m.patches, name); i >= 0 {
+			m.patches = slices.Delete(m.patches, i, i+1)
+		}
+		m.treeDone.Broadcast()
+	}
 }
 
 // nameOf returns the lock name of a filesystem path below the user's root.

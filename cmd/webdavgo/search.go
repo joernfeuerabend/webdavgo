@@ -620,7 +620,8 @@ func writeScopeInvalid(w http.ResponseWriter, href string) {
 // handleSearch handles WebDAV SEARCH requests (RFC 5323).
 // urlPrefix is prepended to every href in the multistatus response; pass ""
 // for the normal user endpoint and "/s/{share_id}" for the share endpoint.
-func handleSearch(w http.ResponseWriter, r *http.Request, dataDir string, urlPrefix string) {
+// owner is the user whose stored DAV:displayname values apply.
+func handleSearch(w http.ResponseWriter, r *http.Request, dataDir string, urlPrefix, owner string) {
 	// Clients use Date minus one second as the watermark for their next
 	// getlastmodified query. Go would stamp Date only when the headers are
 	// written, i.e. after the walk, so changes made during a long walk would
@@ -711,6 +712,15 @@ func handleSearch(w http.ResponseWriter, r *http.Request, dataDir string, urlPre
 		return
 	}
 
+	// RFC 5323 §5.3 and §5.17 work on property values, so a stored displayname
+	// must be in place before the where clause and the sort see the entry.
+	locks := userLocks(owner)
+	displayNames, err := loadDisplayNames(owner, locks.nameOf(root))
+	if err != nil {
+		serviceUnavailable(w, r, "dead property lookup failed", err)
+		return
+	}
+
 	var matches []FileProps
 	var walkErr error
 
@@ -728,6 +738,9 @@ func handleSearch(w http.ResponseWriter, r *http.Request, dataDir string, urlPre
 			return nil
 		}
 		fp := buildFileProps(dataDir, path, fi)
+		if p, ok := displayNames[locks.nameOf(path)]; ok {
+			fp.setDisplayName(p)
+		}
 		if urlPrefix != "" {
 			fp.Href = urlPrefix + fp.Href
 		}

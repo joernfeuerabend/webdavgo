@@ -65,6 +65,15 @@ type FileProps struct {
 	// (statx on Linux, Birthtimespec on Darwin) and is deferred to a later task.
 	CreationDate string // ISO 8601 / RFC3339
 	DisplayName  string
+	// DisplayNameProp is the value PROPPATCH set, written instead of the
+	// derived name. DisplayName then holds its text, for SEARCH to compare.
+	DisplayNameProp *deadProp
+}
+
+// setDisplayName makes a stored DAV:displayname the value of the entry.
+func (fp *FileProps) setDisplayName(p deadProp) {
+	fp.DisplayName = deadPropText(p.Value)
+	fp.DisplayNameProp = &p
 }
 
 // buildFileProps computes a FileProps from a stat result and absolute paths.
@@ -161,6 +170,10 @@ func hrefXML(p string) string {
 // writePropElem writes one <d:propname>value</d:propname> element.
 // resourcetype is written as a complex element; absent values are skipped.
 func writePropElem(b *strings.Builder, name string, fp FileProps) {
+	if name == "displayname" && fp.DisplayNameProp != nil {
+		writeDeadProp(b, *fp.DisplayNameProp)
+		return
+	}
 	if name == "resourcetype" {
 		if fp.IsDir {
 			b.WriteString("<d:resourcetype><d:collection/></d:resourcetype>")
@@ -290,8 +303,62 @@ var protectedProps = map[string]bool{
 	"quota-used-bytes":      true,
 }
 
-func isLiveProp(name xml.Name) bool {
-	return name.Space == davNamespace && (knownProps[name.Local] || protectedProps[name.Local])
+// isProtectedProp reports whether PROPPATCH must refuse name. DAV:displayname is
+// not protected (RFC 4918 §15.2): it is stored like a dead property, and only
+// without a stored value does PROPFIND derive it from the file name.
+func isProtectedProp(name xml.Name) bool {
+	if name.Space != davNamespace || name.Local == "displayname" {
+		return false
+	}
+	return knownProps[name.Local] || protectedProps[name.Local]
+}
+
+func isDisplayNameProp(p deadProp) bool {
+	return p.Name.Space == davNamespace && p.Name.Local == "displayname"
+}
+
+// deadPropText returns the character data of a stored value. A value that does not
+// parse, which the server never stores, is returned as it is.
+func deadPropText(value string) string {
+	dec := xml.NewDecoder(strings.NewReader("<v>" + value + "</v>"))
+	var b strings.Builder
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			return b.String()
+		}
+		if err != nil {
+			return value
+		}
+		if t, ok := tok.(xml.CharData); ok {
+			b.Write(t)
+		}
+	}
+}
+
+// loadDisplayNames returns the DAV:displayname values stored at or below name, by
+// path.
+func loadDisplayNames(owner, name string) (map[string]deadProp, error) {
+	where, args := deadPropScope(owner, name, false)
+	rows, err := db.Query(`SELECT path, lang, value FROM dead_props WHERE `+where+
+		` AND namespace = ? AND name = 'displayname'`, append(args, davNamespace)...)
+	if err != nil {
+		return nil, fmt.Errorf("load display names below %q: %w", name, err)
+	}
+	defer rows.Close()
+	found := map[string]deadProp{}
+	for rows.Next() {
+		var p string
+		dp := deadProp{Name: xml.Name{Space: davNamespace, Local: "displayname"}}
+		if err := rows.Scan(&p, &dp.Lang, &dp.Value); err != nil {
+			return nil, fmt.Errorf("read display names below %q: %w", name, err)
+		}
+		found[p] = dp
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read display names below %q: %w", name, err)
+	}
+	return found, nil
 }
 
 // deadPropTag returns the name to open a property element with, including the
@@ -579,15 +646,12 @@ type propPatchOp struct {
 // path name identifies. The caller holds the path lock and has passed the lock
 // check. §9.2: instructions apply in document order and all or none of them do,
 // so everything is decided on a copy and written in one transaction.
+//
+// The body is read before enterPropPatch, so a slow client cannot hold up a
+// DELETE, COPY or MOVE of an ancestor. The resource may be gone once the wait is
+// over, so it is checked again: an entry for a missing path must not be written.
 func servePropPatch(w http.ResponseWriter, r *http.Request, owner, name, absPath string) {
-	fi, err := os.Stat(absPath)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			http.NotFound(w, r)
-			return
-		}
-		logger.Error("cannot stat PROPPATCH target", "path", absPath, "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+	if _, ok := statPropPatchTarget(w, r, absPath); !ok {
 		return
 	}
 	body, err := io.ReadAll(r.Body)
@@ -605,12 +669,18 @@ func servePropPatch(w http.ResponseWriter, r *http.Request, owner, name, absPath
 		http.Error(w, "invalid PROPPATCH body", http.StatusBadRequest)
 		return
 	}
+	defer userLocks(owner).enterPropPatch(name)()
+	fi, ok := statPropPatchTarget(w, r, absPath)
+	if !ok {
+		return
+	}
 	href := path.Clean(r.URL.Path)
 	if fi.IsDir() && href != "/" {
 		href += "/"
 	}
-	if slices.ContainsFunc(ops, func(op propPatchOp) bool { return isLiveProp(op.prop.Name) }) {
-		writePropPatchRefused(w, href, ops)
+	if slices.ContainsFunc(ops, func(op propPatchOp) bool { return isProtectedProp(op.prop.Name) }) {
+		writePropPatchFailure(w, href, ops, func(op propPatchOp) bool { return isProtectedProp(op.prop.Name) },
+			"403 Forbidden", "<d:error><d:cannot-modify-protected-property/></d:error>")
 		return
 	}
 
@@ -620,9 +690,11 @@ func servePropPatch(w http.ResponseWriter, r *http.Request, owner, name, absPath
 		return
 	}
 	next := map[xml.Name]deadProp{}
+	storedSize := map[xml.Name]int64{}
 	var oldSize, newSize int64
 	for _, p := range stored[name] {
 		next[p.Name] = p
+		storedSize[p.Name] = p.size()
 		oldSize += p.size()
 	}
 	for _, op := range ops {
@@ -636,19 +708,28 @@ func servePropPatch(w http.ResponseWriter, r *http.Request, owner, name, absPath
 	for _, p := range next {
 		newSize += p.size()
 	}
-	// Only growth is refused, so a lowered limit or a full quota never keeps a
-	// client from removing properties.
+	// §9.2.1: 507 goes to the properties that could not be stored, which are the
+	// sets that would take more room than the property holds now. The total only
+	// grows through such a set, so a refused request always names one. Only growth
+	// is refused, so a lowered limit or a full quota never keeps a client from
+	// removing properties.
+	grows := func(op propPatchOp) bool { return !op.remove && op.prop.size() > storedSize[op.prop.Name] }
 	if limit := conf().MaxDeadPropsSize; limit > 0 && newSize > limit && newSize > oldSize {
 		logger.Warn("PROPPATCH rejected: dead property limit exceeded", "user", owner, "path", r.URL.Path,
 			"size", newSize, "limit", limit, "client", remoteIP(r))
-		http.Error(w, "dead property limit exceeded", http.StatusInsufficientStorage)
+		writePropPatchFailure(w, href, ops, grows, "507 Insufficient Storage", "")
 		return
 	}
 	delta := newSize - oldSize
 	var reserved int64
 	if delta > 0 {
 		if err := reserveQuota(owner, delta); err != nil {
-			quotaRefused(w, r, owner, err)
+			if !errors.Is(err, errQuotaExceeded) {
+				serviceUnavailable(w, r, "quota lookup failed", err)
+				return
+			}
+			logQuotaExceeded(r, owner)
+			writePropPatchFailure(w, href, ops, grows, "507 Insufficient Storage", "<d:error><d:quota-not-exceeded/></d:error>")
 			return
 		}
 		reserved = delta
@@ -669,6 +750,10 @@ func servePropPatch(w http.ResponseWriter, r *http.Request, owner, name, absPath
 	}
 	var b strings.Builder
 	writePropPatchStat(&b, names, "200 OK", "")
+	if len(names) == 0 {
+		// §14.24 requires at least one propstat, as for an empty prop in PROPFIND.
+		b.WriteString("<d:propstat><d:prop/><d:status>HTTP/1.1 200 OK</d:status></d:propstat>")
+	}
 	writePropPatchResponse(w, href, b.String())
 }
 
@@ -698,22 +783,40 @@ func storeDeadProps(owner, name string, props map[xml.Name]deadProp) error {
 	return nil
 }
 
-// writePropPatchRefused answers a request that names a live property. §9.2.1: such
-// a property gets 403 with cannot-modify-protected-property, and since nothing is
-// applied, every other one gets 424.
-func writePropPatchRefused(w http.ResponseWriter, href string, ops []propPatchOp) {
-	var protected, others []xml.Name
+// statPropPatchTarget returns the resource's file info, or answers the request
+// and returns false.
+func statPropPatchTarget(w http.ResponseWriter, r *http.Request, absPath string) (os.FileInfo, bool) {
+	fi, err := os.Stat(absPath)
+	if err == nil {
+		return fi, true
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		http.NotFound(w, r)
+		return nil, false
+	}
+	logger.Error("cannot stat PROPPATCH target", "path", absPath, "err", err)
+	http.Error(w, "internal error", http.StatusInternalServerError)
+	return nil, false
+}
+
+// writePropPatchFailure answers a request that changed nothing (§9.2.1). The
+// properties of the instructions failed selects get status with extra in their
+// propstat. Since nothing is applied, every other one gets 424. A property named
+// by several instructions is listed once, under the failure if one of them failed.
+func writePropPatchFailure(w http.ResponseWriter, href string, ops []propPatchOp, failed func(propPatchOp) bool, status, extra string) {
+	var failing, others []xml.Name
 	for _, op := range ops {
-		n := op.prop.Name
-		switch {
-		case isLiveProp(n) && !slices.Contains(protected, n):
-			protected = append(protected, n)
-		case !isLiveProp(n) && !slices.Contains(others, n):
+		if failed(op) && !slices.Contains(failing, op.prop.Name) {
+			failing = append(failing, op.prop.Name)
+		}
+	}
+	for _, op := range ops {
+		if n := op.prop.Name; !slices.Contains(failing, n) && !slices.Contains(others, n) {
 			others = append(others, n)
 		}
 	}
 	var b strings.Builder
-	writePropPatchStat(&b, protected, "403 Forbidden", "<d:error><d:cannot-modify-protected-property/></d:error>")
+	writePropPatchStat(&b, failing, status, extra)
 	writePropPatchStat(&b, others, "424 Failed Dependency", "")
 	writePropPatchResponse(w, href, b.String())
 }
@@ -738,7 +841,7 @@ func writePropPatchResponse(w http.ResponseWriter, href, propstats string) {
 
 // parsePropertyUpdate parses a PROPPATCH body (§14.19) as strictly as a PROPFIND
 // body. Elements it does not know are ignored (§17). A body without any property
-// is an error.
+// is accepted and changes nothing.
 func parsePropertyUpdate(body []byte) ([]propPatchOp, error) {
 	text, hasBOM, err := stripPropfindBOM(body)
 	if err != nil {
@@ -750,14 +853,7 @@ func parsePropertyUpdate(body []byte) ([]propPatchOp, error) {
 	if err := checkPropfindPrefixes(newXMLBodyDecoder(text, hasBOM)); err != nil {
 		return nil, err
 	}
-	ops, err := extractPropPatchOps(newXMLBodyDecoder(text, hasBOM))
-	if err != nil {
-		return nil, err
-	}
-	if len(ops) == 0 {
-		return nil, errors.New("no property in <propertyupdate>")
-	}
-	return ops, nil
+	return extractPropPatchOps(newXMLBodyDecoder(text, hasBOM))
 }
 
 // checkPropertyUpdate checks that the body is well-formed and has the right root.
@@ -920,7 +1016,9 @@ func readPropValue(dec *xml.Decoder, lookup func(string) string) (string, error)
 
 // runPruneProps implements "webdavgo prune-props [directory]". Files removed
 // outside webdavgo leave their entries behind, which keep counting toward the
-// owner's quota. It returns the process exit code.
+// owner's quota. The running service keeps usage in memory, which this process
+// cannot reach, so it bumps the usage epoch, as reset-totp does for sessions. It
+// returns the process exit code.
 func runPruneProps(args []string) int {
 	if len(args) > 1 {
 		logger.Error("usage: webdavgo prune-props [-config file] [-data-dir dir] [directory]")
@@ -967,6 +1065,12 @@ func runPruneProps(args []string) int {
 		settleQuota(u, 0, -f)
 		paths += p
 		freed += f
+	}
+	if freed > 0 {
+		if err := bumpUsageEpoch(); err != nil {
+			logger.Error("prune-props: the running service keeps the old usage until its next restart", "err", err)
+			return 1
+		}
 	}
 	logger.Info("dead properties pruned", "users", len(owners), "paths", paths, "bytes", freed)
 	return 0

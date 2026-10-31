@@ -133,16 +133,29 @@ all. Removing a property that does not exist is not an error.
 |-----------|--------|
 | applied | 207, every named property with 200 |
 | names a live property | 207 and nothing changes: the live property with 403 and `cannot-modify-protected-property`, every other one with 424 |
-| would pass the owner's quota | 507 with `DAV:quota-not-exceeded`, nothing changes |
-| would pass `max_dead_props_size` for the resource | 507, nothing changes |
-| resource does not exist | 404 |
-| not well-formed XML, root other than `DAV:propertyupdate`, or no property named | 400 |
+| would pass the owner's quota | 207 and nothing changes: properties that could not be stored with 507 and `DAV:quota-not-exceeded`, every other one with 424 |
+| would pass `max_dead_props_size` for the resource | 207 and nothing changes: properties that could not be stored with 507, every other one with 424 |
+| resource does not exist, or removed while the request waited | 404 |
+| no property named | 207 with an empty `prop` and 200, nothing changes |
+| not well-formed XML, or root other than `DAV:propertyupdate` | 400 |
 
-The live properties are `getlastmodified`, `getetag`, `getcontentlength`,
-`getcontenttype`, `resourcetype`, `creationdate`, `displayname`, `supportedlock`,
-`lockdiscovery`, `quota-available-bytes` and `quota-used-bytes`, all in `DAV:`.
-`displayname` is derived from the file name, so it cannot be set. The two 507
-checks refuse growth only, so properties can always be removed.
+The protected properties are `getlastmodified`, `getetag`, `getcontentlength`,
+`getcontenttype`, `resourcetype`, `creationdate`, `supportedlock`, `lockdiscovery`,
+`quota-available-bytes` and `quota-used-bytes`, all in `DAV:`.
+
+The properties that could not be stored are those set to a value larger than the
+one they hold now. A set that does not grow and a remove get 424. The two 507 checks
+refuse growth only, so properties can always be removed.
+
+`DAV:displayname` is not protected (RFC 4918 §15.2). A value set with PROPPATCH is
+returned by PROPFIND and SEARCH, and SEARCH compares and sorts by it, instead of the
+name derived from the file name. Removing it restores the derived name. It counts
+toward the quota and `max_dead_props_size`, and DELETE, MOVE and COPY treat it like
+a dead property, so a moved resource keeps a set name.
+
+A PROPPATCH does not run at the same time as a DELETE, COPY or MOVE of the resource
+or of an ancestor. It waits for those to finish, and they wait for a PROPPATCH that
+is already running. This also holds across the user endpoint and shares.
 
 The size of a property is the bytes of its namespace, local name, `xml:lang` and
 value. A value keeps its child elements, mixed content, namespaces and the
@@ -152,7 +165,7 @@ of the property element are not kept.
 PROPFIND identifies a property by namespace and local name, so `getetag` without
 the `DAV:` namespace is not the live property. It returns a requested dead property
 with its value, `allprop` returns all of them and `propname` lists their names.
-SEARCH does not return dead properties.
+SEARCH does not return dead properties, other than a set `displayname`.
 
 | Request | Dead properties |
 |---------|-----------------|

@@ -293,6 +293,9 @@ func serveDAV(w http.ResponseWriter, r *http.Request, h *webdav.Handler, absPath
 	// Only the user handler is rooted at "/", a share at its /s/ prefix.
 	isShare := h.Prefix != "/"
 	name := locks.nameOf(absPath)
+	if isShareWriteMethod(r.Method) {
+		syncUsageEpoch()
+	}
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodPost:
 		// A share accepts no lock tokens, and an If header on a read never
@@ -369,6 +372,7 @@ func serveDAV(w http.ResponseWriter, r *http.Request, h *webdav.Handler, absPath
 		}
 		var removed []string
 		defer func() { done(removed...) }()
+		defer locks.beginTreeOp(name)()
 		before := treeSize(key)
 		h.ServeHTTP(w, r)
 		// Measured rather than derived from the status: a failed recursive
@@ -556,6 +560,7 @@ func serveCopyMove(w http.ResponseWriter, r *http.Request, h *webdav.Handler, ab
 	}
 	var removed []string
 	defer func() { done(removed...) }()
+	defer locks.beginTreeOp(srcName, dstName)()
 	dstBefore := treeSize(dst)
 
 	if r.Method == "MOVE" {

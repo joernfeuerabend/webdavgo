@@ -368,7 +368,7 @@ var settingDefs = []settingDef{
 
 	{key: "data_dir", label: "Data directory", section: "webdav", desc: "Directory for the database (webdavgo.db) and user files (users/<name>/)."},
 	{key: "max_request_body", label: "Max. request body", section: "webdav", desc: "Maximum request body for every method except PUT; larger bodies get 413."},
-	{key: "max_dead_props_size", label: "Max. dead properties per resource", section: "webdav", desc: "Maximum total size of the dead properties of one resource; a PROPPATCH that would exceed it gets 507. 0 = unlimited."},
+	{key: "max_dead_props_size", label: "Max. dead properties per resource", section: "webdav", desc: "Maximum total size of the dead properties of one resource; a PROPPATCH that would exceed it fails with 507 for the properties concerned. 0 = unlimited."},
 	{key: "allow_propfind_infinity", label: "Allow PROPFIND Depth: infinity", section: "webdav", desc: "Allow PROPFIND with Depth: infinity (or no Depth header); otherwise 403."},
 	{key: "auth_cache_ttl", label: "Login cache lifetime", section: "webdav", desc: "How long a successful WebDAV/API login is remembered to skip bcrypt; 0 disables."},
 

@@ -175,7 +175,7 @@ func serveShare(w http.ResponseWriter, r *http.Request, share *Share, shareRoot 
 	case "SEARCH":
 		r2 := r.Clone(r.Context())
 		r2.URL.Path = subPath
-		handleSearch(w, r2, shareRoot, sharePrefix)
+		handleSearch(w, r2, shareRoot, sharePrefix, share.OwnerUsername)
 	case "PROPFIND":
 		r2 := r.Clone(r.Context())
 		r2.URL.Path = subPath

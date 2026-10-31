@@ -123,7 +123,7 @@ func handlePropfind(w http.ResponseWriter, r *http.Request, dataDir, urlPrefix, 
 
 	// A share reads the owner's entries, so the names start at the owner's root.
 	dead := deadPropsView{all: all, root: userLocks(owner).nameOf(dataDir)}
-	if all || len(unknown) > 0 {
+	if all || len(unknown) > 0 || slices.Contains(known, "displayname") {
 		dead.byPath, err = loadDeadProps(owner, path.Join(dead.root, cleanURL), depth == "0")
 		if err != nil {
 			serviceUnavailable(w, r, "dead property lookup failed", err)
@@ -202,6 +202,12 @@ func writePropfindEntry(b *strings.Builder, dataDir, absPath string, fi os.FileI
 	// The lock name is relative to the user root, so taken before the prefix.
 	lockName := fp.Href
 	deadProps := dead.byPath[path.Join(dead.root, fp.Href)]
+	// A stored displayname takes the place of the derived one, so it must not be
+	// written a second time among the dead properties.
+	if i := slices.IndexFunc(deadProps, isDisplayNameProp); i >= 0 {
+		fp.setDisplayName(deadProps[i])
+		deadProps = slices.Delete(slices.Clone(deadProps), i, i+1)
+	}
 	if urlPrefix != "" {
 		fp.Href = urlPrefix + fp.Href
 	}
