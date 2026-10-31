@@ -750,10 +750,6 @@ func servePropPatch(w http.ResponseWriter, r *http.Request, owner, name, absPath
 	}
 	var b strings.Builder
 	writePropPatchStat(&b, names, "200 OK", "")
-	if len(names) == 0 {
-		// §14.24 requires at least one propstat, as for an empty prop in PROPFIND.
-		b.WriteString("<d:propstat><d:prop/><d:status>HTTP/1.1 200 OK</d:status></d:propstat>")
-	}
 	writePropPatchResponse(w, href, b.String())
 }
 
@@ -840,8 +836,9 @@ func writePropPatchResponse(w http.ResponseWriter, href, propstats string) {
 }
 
 // parsePropertyUpdate parses a PROPPATCH body (§14.19) as strictly as a PROPFIND
-// body. Elements it does not know are ignored (§17). A body without any property
-// is accepted and changes nothing.
+// body. Elements it does not know are ignored (§17). §14.19 requires at least one
+// set or remove, and one that names no property has nothing to apply, so a body
+// without any property is an error.
 func parsePropertyUpdate(body []byte) ([]propPatchOp, error) {
 	text, hasBOM, err := stripPropfindBOM(body)
 	if err != nil {
@@ -853,7 +850,14 @@ func parsePropertyUpdate(body []byte) ([]propPatchOp, error) {
 	if err := checkPropfindPrefixes(newXMLBodyDecoder(text, hasBOM)); err != nil {
 		return nil, err
 	}
-	return extractPropPatchOps(newXMLBodyDecoder(text, hasBOM))
+	ops, err := extractPropPatchOps(newXMLBodyDecoder(text, hasBOM))
+	if err != nil {
+		return nil, err
+	}
+	if len(ops) == 0 {
+		return nil, errors.New("no property in <propertyupdate>")
+	}
+	return ops, nil
 }
 
 // checkPropertyUpdate checks that the body is well-formed and has the right root.

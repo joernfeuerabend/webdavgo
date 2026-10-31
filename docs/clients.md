@@ -136,8 +136,7 @@ all. Removing a property that does not exist is not an error.
 | would pass the owner's quota | 207 and nothing changes: properties that could not be stored with 507 and `DAV:quota-not-exceeded`, every other one with 424 |
 | would pass `max_dead_props_size` for the resource | 207 and nothing changes: properties that could not be stored with 507, every other one with 424 |
 | resource does not exist, or removed while the request waited | 404 |
-| no property named | 207 with an empty `prop` and 200, nothing changes |
-| not well-formed XML, or root other than `DAV:propertyupdate` | 400 |
+| not well-formed XML, root other than `DAV:propertyupdate`, or no `set` or `remove` that names a property (RFC 4918 §14.19) | 400 |
 
 The protected properties are `getlastmodified`, `getetag`, `getcontentlength`,
 `getcontenttype`, `resourcetype`, `creationdate`, `supportedlock`, `lockdiscovery`,
