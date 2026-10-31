@@ -6,8 +6,10 @@ on the internet.
 
 ## Why
 
-- **One function:** webdavgo serves files over WebDAV. It has no calendar,
-  contacts, office, media or plugin features.
+- **One function:** webdavgo serves files over WebDAV.
+- **WebDAV compliant:** Passes the [litmus](http://www.webdav.org/neon/litmus/)
+  WebDAV compliance suite with 100 % in all test suites (basic, copymove,
+  props, locks, http).
 - **One binary:** Pure Go with embedded SQLite. No database server, no
   reverse proxy, no other runtime dependencies.
 - **Easy to deploy:** Copy the binary to a Linux server, start it and
@@ -122,29 +124,6 @@ To run webdavgo with Docker instead, see [Container](docs/installation.md#contai
 - [Clients](docs/clients.md): SEARCH, ETags and conditional requests, hrefs, storage quota
 - [Shares](docs/shares.md): email-bound shares and the share API
 - [Development](docs/development.md): build and tests
-
-## Not included
-
-CalDAV/CardDAV, office integration, media galleries, plugin system.
-
-- DNS-01 challenges, own certificates
-- Environment variables for configuration
-- Cross-user shares where the recipient is themselves a webdavgo user with
-  their own filesystem (a recipient is identified solely by email and holds a
-  share-specific token)
-- Server-side email / invite delivery (the owner distributes the share URL and
-  token through any channel)
-- Anonymous / public shares (no email binding)
-- Orphan-share cleanup (owner deletes the shared directory → recipient sees
-  404, the share row remains until explicitly revoked)
-- Persistent locks (lock state lives in memory, lost on restart)
-- Share quota
-
-## What comes next
-
-- Signed release binaries and self-update
-- Behind-proxy mode
-- Invite-link flow for adding users
 
 ## License
 
