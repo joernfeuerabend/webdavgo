@@ -841,9 +841,8 @@ func writePropPatchResponse(w http.ResponseWriter, href, propstats string) {
 }
 
 // parsePropertyUpdate parses a PROPPATCH body (§14.19) as strictly as a PROPFIND
-// body. Elements it does not know are ignored (§17). §14.19 requires at least one
-// set or remove, so a body without one is an error. §14.18 allows any content in
-// prop, so one that names no property is valid and returns no instruction.
+// body. A body that violates the DTD of §14 is an error (§8.2, §17), see
+// extractPropPatchOps. An empty prop is valid and returns no instruction.
 func parsePropertyUpdate(body []byte) ([]propPatchOp, error) {
 	text, hasBOM, err := stripPropfindBOM(body)
 	if err != nil {
@@ -910,6 +909,12 @@ func checkPropertyUpdate(dec *xml.Decoder) error {
 // extractPropPatchOps returns the instructions in document order. It works on raw
 // tokens, because a value must keep its prefixes and Token replaces them. The
 // caller has already checked the body.
+//
+// It enforces the DTD: at least one set or remove (§14.19), exactly one prop in
+// each (§14.23, §14.26), empty property elements in a remove (§14.23), and no text
+// where only elements are allowed (§14.18). §17: unexpected elements count as not
+// there, with everything inside them, and attributes are not looked at. A property
+// value is exempt, since it keeps all its XML.
 func extractPropPatchOps(dec *xml.Decoder) ([]propPatchOp, error) {
 	var (
 		ops    []propPatchOp
@@ -919,6 +924,7 @@ func extractPropPatchOps(dec *xml.Decoder) ([]propPatchOp, error) {
 		inSet  bool // inside a DAV:set or DAV:remove
 		inProp bool // inside the DAV:prop of one
 		sawOp  bool // a DAV:set or DAV:remove was seen
+		props  int  // DAV:prop children of the current set or remove
 	)
 	lookup := func(prefix string) string {
 		if prefix == "xml" {
@@ -967,8 +973,14 @@ func extractPropPatchOps(dec *xml.Decoder) ([]propPatchOp, error) {
 				inSet = isDAV && (t.Name.Local == "set" || t.Name.Local == "remove")
 				remove = t.Name.Local == "remove"
 				sawOp = sawOp || inSet
+				props = 0
 			case 3:
 				inProp = inSet && isDAV && t.Name.Local == "prop"
+				if inProp {
+					if props++; props > 1 {
+						return nil, errors.New("more than one <prop> in <set> or <remove>")
+					}
+				}
 			case 4:
 				if !inProp {
 					break
@@ -977,13 +989,24 @@ func extractPropPatchOps(dec *xml.Decoder) ([]propPatchOp, error) {
 				if err != nil {
 					return nil, err
 				}
+				if remove && value != "" {
+					return nil, fmt.Errorf("property <%s> in <remove> is not empty", t.Name.Local)
+				}
 				prop := deadProp{Name: xml.Name{Space: lookup(t.Name.Space), Local: t.Name.Local}, Lang: lang, Value: value}
 				ops = append(ops, propPatchOp{prop: prop, remove: remove})
 				// The end tag went with the value.
 				scopes, langs = scopes[:len(scopes)-1], langs[:len(langs)-1]
 			}
 		case xml.EndElement:
+			if len(scopes) == 2 && inSet && props == 0 {
+				return nil, errors.New("no <prop> in <set> or <remove>")
+			}
 			scopes, langs = scopes[:len(scopes)-1], langs[:len(langs)-1]
+		case xml.CharData:
+			structural := len(scopes) == 1 || len(scopes) == 2 && inSet || len(scopes) == 3 && inProp
+			if structural && len(strings.Trim(string(t), " \t\r\n")) > 0 {
+				return nil, errors.New("text where only elements are allowed")
+			}
 		}
 	}
 }

@@ -136,8 +136,16 @@ all. Removing a property that does not exist is not an error.
 | would pass the owner's quota | 207 and nothing changes: properties that could not be stored with 507 and `DAV:quota-not-exceeded`, every other one with 424 |
 | would pass `max_dead_props_size` for the resource | 207 and nothing changes: properties that could not be stored with 507, every other one with 424 |
 | resource does not exist, or removed while the request waited | 404 |
-| a `set` or `remove` that names no property, for example with an empty `prop` (RFC 4918 §14.18) | 207 with an empty `prop` and 200, nothing changes |
-| not well-formed XML, root other than `DAV:propertyupdate`, or no `set` or `remove` at all (RFC 4918 §14.19) | 400 |
+| a `set` or `remove` with an empty `prop` | 207 with an empty `prop` and 200, nothing changes |
+| not well-formed XML, or root other than `DAV:propertyupdate` | 400 |
+| no `set` or `remove` (RFC 4918 §14.19), also when only unexpected elements are there | 400 |
+| a `set` or `remove` without exactly one `prop` (§14.23, §14.26) | 400 |
+| a property element in a `remove` that is not empty, including whitespace or a comment (§14.23) | 400 |
+| text in `prop` (§14.18), `set`, `remove` or `propertyupdate`, other than whitespace | 400 |
+
+Other elements and attributes outside a property value are ignored, with everything
+inside such an element (RFC 4918 §17). A property value in a `set` keeps all its XML
+elements.
 
 The protected properties are `getlastmodified`, `getetag`, `getcontentlength`,
 `getcontenttype`, `resourcetype`, `creationdate`, `supportedlock`, `lockdiscovery`,
