@@ -147,13 +147,6 @@ appear. The setup token lives in the database, valid for one hour. Once it
 has expired, `setup-info` issues a new one that the running service accepts.
 After setup it only says that setup is complete.
 
-<a id="uninstall"></a>
-**`webdavgo uninstall`** stops and disables the service and removes the
-unit, `/etc/logrotate.d/webdavgo` and the binary. It keeps `/etc/webdavgo`,
-`/var/lib/webdavgo` and `/var/log/webdavgo` and says so. `-purge` also
-removes all three and the system user, after you type the hostname (or with
-`-yes`).
-
 **`require_tls = true`** (set by `install`): as long as `tls_mode` is `off`,
 the WebDAV listener is not started on a network address (logged at Warn).
 Binding it to a loopback address (`webdav_listen_address = "127.0.0.1"`) is still allowed.
@@ -229,11 +222,21 @@ less install.sh
 bash install.sh
 ```
 
-Removal works the same for both install ways: `sudo webdavgo uninstall`
-removes the service and keeps `/etc/webdavgo`, `/var/lib/webdavgo` and
-`/var/log/webdavgo`, and `sudo webdavgo uninstall -purge` also removes them
-and the `webdavgo` user after you type the hostname (or with `-yes`). See
-[`webdavgo uninstall`](#uninstall).
+## Uninstall
+
+Removal works the same after `webdavgo install` and after the install
+script:
+
+```sh
+sudo webdavgo uninstall          # removes the service, keeps configuration, data and logs
+sudo webdavgo uninstall -purge   # also removes configuration, data, logs and the webdavgo user
+```
+
+**`webdavgo uninstall`** stops and disables the service and removes the
+unit, `/etc/logrotate.d/webdavgo` and the binary. It keeps `/etc/webdavgo`,
+`/var/lib/webdavgo` and `/var/log/webdavgo` and says so. `-purge` also
+removes all three and the system user, after you type the hostname (or with
+`-yes`).
 
 ## Container
 

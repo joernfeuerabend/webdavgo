@@ -18,7 +18,7 @@ shares, quota counters, setup token, session epochs), no configuration.
 | `-data-dir <dir>` | overrides `data_dir` |
 | `-log-level <level>` | overrides `log_level` |
 
-Subcommands: `install`, `uninstall` (see [Deployment](installation.md#deployment-with-webdavgo-install)),
+Subcommands: `install`, `uninstall` (see [Deployment](installation.md#deployment-with-webdavgo-install) and [Uninstall](installation.md#uninstall)),
 `setup-info` and `reset-totp` (see [Admin access](administration.md#admin-access)),
 `healthcheck` (see [Health checks](administration.md#health-checks)).
 

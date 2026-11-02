@@ -113,12 +113,12 @@ Enter your domain and select **Apply**. webdavgo checks DNS and port 443,
 obtains a Let's Encrypt certificate and serves WebDAV at
 `https://<your-domain>/`. No restart is needed.
 
-To remove webdavgo, `sudo webdavgo uninstall` removes the service and
-`sudo webdavgo uninstall -purge` also removes data, configuration and logs
-(see [Uninstall](docs/installation.md#uninstall)).
-
 **5. Add users** under **Admin → Users** and connect a WebDAV client to
 `https://<your-domain>/`.
+
+**6. Uninstall.** `sudo webdavgo uninstall` removes the service and
+`sudo webdavgo uninstall -purge` also removes data, configuration and logs.
+See [Uninstall](docs/installation.md#uninstall).
 
 The admin UI listens on port 8443 on all interfaces, so on a server
 without a firewall it is reachable from the internet. To keep it private,
