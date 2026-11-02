@@ -224,6 +224,19 @@ pre.cmd {
 .reset-form { margin-top: .75rem; }
 .pending-list { margin: .5rem 0 0 1.25rem; }
 
+/* ---- update ---- */
+.confirm-dialog {
+  margin: auto;
+  max-width: 480px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1.25rem;
+}
+.confirm-dialog::backdrop { background: rgba(0,0,0,.6); }
+.confirm-dialog p { font-size: .9rem; margin-bottom: 1rem; }
+
 /* ---- TOTP enrolment ---- */
 .enrol-wrap { max-width: 520px; }
 .steps { margin: 0 0 1.25rem 1.25rem; }
