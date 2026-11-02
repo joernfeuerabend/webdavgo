@@ -91,7 +91,7 @@ input[type=text], input[type=password], input[type=email], input[type=number], s
   font-size: .95rem;
 }
 input:focus, select:focus { outline: 2px solid var(--accent); border-color: transparent; }
-input[disabled] { opacity: .5; cursor: not-allowed; }
+input[disabled], button[disabled] { opacity: .5; cursor: not-allowed; }
 button, .btn {
   display: inline-block;
   padding: .45rem 1rem;
