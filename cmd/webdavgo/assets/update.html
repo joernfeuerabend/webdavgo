@@ -36,11 +36,23 @@
           {{template "csrf" .}}
           <button type="submit" class="btn">Check for updates</button>
         </form>
-        <form method="post" action="/admin/update/install" hx-boost="false">
+        {{/* update.js opens #update-confirm first and submits the form only
+             after the admin confirms. */}}
+        <form method="post" action="/admin/update/install" hx-boost="false" {{if .CanInstall}}data-update-confirm="update-confirm"{{end}}>
           {{template "csrf" .}}
           <button type="submit" class="btn-primary" {{if not .CanInstall}}disabled{{end}}>Install update</button>
         </form>
       </div>
+      {{if .CanInstall}}
+      <dialog id="update-confirm" class="confirm-dialog" aria-labelledby="update-confirm-title">
+        <h2 id="update-confirm-title">Install {{.Check.Latest.Tag}}?</h2>
+        <p>webdavgo downloads {{.Check.Latest.Tag}}, then the update helper installs it and restarts the service. Connections are interrupted briefly and you are logged out. Sign in again to see the result.</p>
+        <div class="form-actions">
+          <button type="button" class="btn" data-update-cancel>Cancel</button>
+          <button type="button" class="btn-primary" data-update-confirmed>Install {{.Check.Latest.Tag}}</button>
+        </div>
+      </dialog>
+      {{end}}
       {{if .Blocked}}<p class="muted small">{{.Blocked}}</p>
       {{else if .Pending}}<p class="muted small">An update request is waiting for the update helper.</p>
       {{else if and .Check .Check.Latest}}<p class="muted small">Downloads {{.Check.Latest.Tag}}, then the update helper checks it again, installs it and restarts the service. Connections are interrupted briefly.</p>{{end}}
@@ -50,7 +62,9 @@
     <div class="card">
       <h2>Last install attempt</h2>
       {{if .Pending}}
-      <p>The update has been downloaded and handed to the update helper. When the helper is done, the service restarts. <a href="/admin/update" hx-boost="false">Reload this page</a> to see the result.</p>
+      {{/* update.js polls this page while the request is pending and
+           replaces the text below with the progress. */}}
+      <p id="update-progress" role="status" aria-live="polite" data-update-pending>The update has been downloaded and handed to the update helper. When the helper is done, the service restarts. <a href="/admin/update" hx-boost="false">Reload this page</a> to see the result.</p>
       {{else}}
       {{with .Status}}
       <p class="{{if .OK}}success{{else}}error{{end}}">{{if .OK}}Success{{else}}Failed{{end}}: {{.Message}}</p>
