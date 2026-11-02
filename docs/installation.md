@@ -158,6 +158,76 @@ the WebDAV listener is not started on a network address (logged at Warn).
 Binding it to a loopback address (`webdav_listen_address = "127.0.0.1"`) is still allowed.
 The admin listener runs as usual, so the Settings page can turn TLS on.
 
+### Install script
+
+`install.sh` in the repository root downloads the latest release for the
+machine and runs `webdavgo install` with it:
+
+```sh
+bash <(curl -fsSL https://raw.githubusercontent.com/joernfeuerabend/webdavgo/main/install.sh)
+```
+
+`curl -fsSL https://raw.githubusercontent.com/joernfeuerabend/webdavgo/main/install.sh | bash`
+works as well. The script runs as a normal user and uses `sudo` only for
+`webdavgo install`. Run as root, it calls `webdavgo install` without
+`sudo`. It reads all answers, its own and those of `webdavgo install`, from
+`/dev/tty`, so it needs a terminal. If `/dev/tty` cannot be opened, it stops
+with a message saying so.
+
+It needs bash, coreutils, curl, tar, `sha256sum`, `ss` (iproute2) and
+`systemctl`, which are present by default on Debian, Ubuntu, Raspberry Pi
+OS, Fedora, RHEL and derivatives, openSUSE and Arch.
+
+**Supported architectures:** amd64 and arm64. arm64 includes Raspberry Pi
+3, 4, 5, 400 and Zero 2 W with a 64-bit kernel (`uname -m` prints
+`aarch64`). Raspberry Pi 1, Pi 2, Zero and Zero W (ARMv6 and ARMv7) are not
+supported.
+
+**Checks.** The script prints one line per check: a green check mark when it
+passes, a yellow mark for a warning and a red cross when it fails. Colors are
+used only when the output is a terminal and `NO_COLOR` is not set. If any
+check fails, the script stops after the checks and changes nothing.
+
+| Check | Passes | Warns | Fails |
+|-------|--------|-------|-------|
+| Linux and systemd | Linux, `systemctl` found and `/run/systemd/system` exists | | otherwise |
+| Architecture (`uname -m`) | `x86_64` (amd64), `aarch64` or `arm64` (arm64) | | anything else. For `armv6l` and `armv7l` the message says that a 64-bit OS (64-bit kernel) is required, e.g. 64-bit Raspberry Pi OS |
+| Tools | `curl`, `tar`, `sha256sum` and, unless run as root, `sudo` found | | one of them is missing |
+| Ports 443 and 8443 (`ss -ltn`), one line per port | port not in use, or in use while the `webdavgo` service is active (reported as held by the existing installation) | `ss` not found, the check is skipped | port in use and the `webdavgo` service not active |
+| Free disk space on the filesystems of `/usr/local/bin` and `/var/lib`, one line each | at least 100 MB, and for `/var/lib` at least 1 GB | `/var/lib` has less than 1 GB | less than 100 MB |
+| Memory (`MemTotal` in `/proc/meminfo`) | at least 256 MB | less than 256 MB | |
+| Existing installation | always. If `/usr/local/bin/webdavgo` exists, the line says that `webdavgo install` will update it and keep data and configuration | | |
+| GitHub | `SHA256SUMS` of the latest release downloaded and it lists a tarball for the architecture | | download failed, or no tarball for the architecture |
+
+The GitHub check downloads
+`https://github.com/joernfeuerabend/webdavgo/releases/latest/download/SHA256SUMS`
+and takes the tarball name `webdavgo_<version>_linux_<arch>.tar.gz` and the
+version from it. It does not use the GitHub API.
+
+**Confirmation.** After the checks the script prints the version, the
+architecture and the download URL, says that `sudo ./webdavgo install` runs
+next and what it sets up, and asks `Install webdavgo vX.Y.Z? [y/N]`. Anything
+other than `y` or `yes` aborts without changes.
+
+**Download and install.** On yes it creates a temporary directory with
+`mktemp -d` (removed when the script exits), downloads the tarball from
+`https://github.com/joernfeuerabend/webdavgo/releases/download/v<version>/`
+into it, verifies it with `sha256sum --ignore-missing -c SHA256SUMS`,
+extracts it and runs `sudo ./webdavgo install` with stdin from `/dev/tty`.
+`-auto-update` is not passed, so `webdavgo install` asks whether to prepare
+the installation for updates via the web UI. Its output is shown as it is,
+and the script exits with its exit code. On a system with `/tmp` mounted
+`noexec`, set `TMPDIR` to a directory that allows execution.
+
+**Reading the script first.** To check the script before running it,
+download it, read it and run the local copy:
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/joernfeuerabend/webdavgo/main/install.sh
+less install.sh
+bash install.sh
+```
+
 ## Container
 
 The image `joernfeuerabend/webdavgo` on Docker Hub (linux/amd64 and
