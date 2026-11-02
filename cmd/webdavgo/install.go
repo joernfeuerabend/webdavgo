@@ -206,11 +206,12 @@ func systemChecks(command string) bool {
 func runInstall(args []string) int {
 	fset := flag.NewFlagSet("webdavgo install", flag.ContinueOnError)
 	root := fset.String("root", "/", "prefix for every path; other than / skips user creation and systemctl")
+	autoUpdate := fset.String("auto-update", "", "yes or no: prepare the installation for updates via the web UI, without asking")
 	if err := fset.Parse(args); err != nil {
 		return 2
 	}
-	if fset.NArg() > 0 {
-		logger.Error("usage: webdavgo install [-root dir]")
+	if fset.NArg() > 0 || (*autoUpdate != "" && *autoUpdate != "yes" && *autoUpdate != "no") {
+		logger.Error("usage: webdavgo install [-root dir] [-auto-update=yes|no]")
 		return 2
 	}
 	system := filepath.Clean(*root) == "/"
@@ -218,6 +219,21 @@ func runInstall(args []string) int {
 		return 1
 	}
 	at := func(p string) string { return filepath.Join(*root, p) }
+
+	// Asked before the plan is printed, so that the plan shows the answer.
+	helperPresent := fileExists(at(updatePathUnit)) || fileExists(at(updateServiceUnit))
+	wantHelper, helperNote := helperPresent, ""
+	switch {
+	case *autoUpdate != "":
+		wantHelper = *autoUpdate == "yes"
+	case system && stdinIsTerminal():
+		wantHelper = askYesNo("Prepare this installation for updates via the web UI? This installs the root helper units "+
+			filepath.Base(updatePathUnit)+" and "+filepath.Base(updateServiceUnit)+".", helperPresent)
+	case !system:
+		helperNote = " (not asked with -root and no -auto-update flag, so the current state is kept)"
+	default:
+		helperNote = " (not asked: no terminal and no -auto-update flag, so the current state is kept)"
+	}
 
 	exe, err := os.Executable()
 	if err == nil {
@@ -341,14 +357,22 @@ func runInstall(args []string) int {
 		logrotate.desc += "; logrotate is not installed: without it the log files are never rotated"
 	}
 	steps = append(steps, logrotate)
+	steps = append(steps, updateHelperSteps(at, system, wantHelper, helperPresent, helperNote)...)
 
 	if system {
 		wasActive := exec.Command("systemctl", "is-active", "--quiet", serviceName).Run() == nil
+		enable := "systemctl daemon-reload and systemctl enable --now " + serviceName
+		if wantHelper {
+			enable += " " + filepath.Base(updatePathUnit)
+		}
 		steps = append(steps, planStep{
-			desc: "systemctl daemon-reload and systemctl enable --now " + serviceName,
+			desc: enable,
 			do: func() error {
 				if err := systemctl("daemon-reload"); err != nil {
 					return err
+				}
+				if wantHelper {
+					return systemctl("enable", "--now", serviceName, filepath.Base(updatePathUnit))
 				}
 				return systemctl("enable", "--now", serviceName)
 			},
@@ -368,6 +392,90 @@ func runInstall(args []string) int {
 	}
 
 	return runPlan("webdavgo install will:", steps, nil)
+}
+
+// updateHelperSteps adds, keeps or removes the root helper for updates via
+// the web UI (see update.go). Removing it disables the path unit first. The
+// caller's daemon-reload step follows these steps.
+func updateHelperSteps(at func(string) string, system, want, present bool, note string) []planStep {
+	pathUnit, serviceUnit := at(updatePathUnit), at(updateServiceUnit)
+	if !want {
+		if !present {
+			return []planStep{{desc: "skip the update helper: updates via the web UI are not prepared" + note +
+				", enable them with -auto-update=yes"}}
+		}
+		var steps []planStep
+		if system {
+			steps = append(steps, disableUpdateHelperStep())
+		}
+		return append(steps, removeStep(pathUnit, false), removeStep(serviceUnit, false))
+	}
+	steps := []planStep{dirStep(at(updateDir), serviceUser, serviceUser, system)}
+	for _, u := range []struct{ path, text, desc string }{
+		{serviceUnit, updateServiceUnitText, "the update helper unit " + serviceUnit +
+			" (0644, runs " + installBin + " apply-update as root)"},
+		{pathUnit, updatePathUnitText, "the path unit " + pathUnit +
+			" (0644, starts the update helper when the admin UI places " + updateDir + "/" + updateRequestFile + ")"},
+	} {
+		if old, err := os.ReadFile(u.path); err == nil && string(old) == u.text {
+			steps = append(steps, planStep{desc: "keep " + u.path + " (unchanged)"})
+			continue
+		}
+		steps = append(steps, planStep{
+			desc: "write " + u.desc + note,
+			do:   func() error { return writeAtomic(u.path, []byte(u.text), 0644) },
+		})
+	}
+	return steps
+}
+
+// disableUpdateHelperStep stops and disables the path unit if systemd
+// knows it.
+func disableUpdateHelperStep() planStep {
+	unit := filepath.Base(updatePathUnit)
+	return planStep{
+		desc: "systemctl disable --now " + unit,
+		do: func() error {
+			if exec.Command("systemctl", "cat", unit).Run() != nil {
+				return nil
+			}
+			return systemctl("disable", "--now", unit)
+		},
+	}
+}
+
+// stdinIsTerminal reports whether install can ask questions.
+func stdinIsTerminal() bool {
+	fi, err := os.Stdin.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+// askYesNo asks question on the terminal. An empty answer or end of input
+// takes def.
+func askYesNo(question string, def bool) bool {
+	hint := "[y/N]"
+	if def {
+		hint = "[Y/n]"
+	}
+	in := bufio.NewReader(os.Stdin)
+	for {
+		fmt.Printf("%s %s ", question, hint)
+		line, err := in.ReadString('\n')
+		switch strings.ToLower(strings.TrimSpace(line)) {
+		case "y", "yes":
+			return true
+		case "n", "no":
+			return false
+		case "":
+			if err != nil {
+				fmt.Println()
+			}
+			return def
+		}
+		if err != nil {
+			return def
+		}
+	}
 }
 
 // missingLogKeys names the log keys an existing config does not set, e.g.
@@ -546,6 +654,14 @@ func runUninstall(args []string) int {
 		steps = append(steps, planStep{desc: "skip systemctl (-root)"})
 	}
 	steps = append(steps, removeStep(at(installUnit), false), removeStep(at(installLogrotate), false))
+	if system && (fileExists(at(updatePathUnit)) || fileExists(at(updateServiceUnit))) {
+		steps = append(steps, disableUpdateHelperStep())
+	}
+	steps = append(steps,
+		removeStep(at(updatePathUnit), false),
+		removeStep(at(updateServiceUnit), false),
+		removeStep(at(previousBinDir), true),
+	)
 	if system {
 		steps = append(steps, planStep{desc: "systemctl daemon-reload", do: func() error { return systemctl("daemon-reload") }})
 	}

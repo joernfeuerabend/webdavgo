@@ -74,7 +74,8 @@ var version = "dev"
 
 const usage = "webdavgo [flags] | webdavgo reset-totp [flags] <username> | webdavgo setup-info [flags] | " +
 	"webdavgo prune-props [flags] [directory] | " +
-	"webdavgo healthcheck [-config file] | webdavgo install [-root dir] | webdavgo uninstall [-root dir] [-purge [-yes]]"
+	"webdavgo healthcheck [-config file] | webdavgo install [-root dir] [-auto-update=yes|no] | " +
+	"webdavgo uninstall [-root dir] [-purge [-yes]] | webdavgo apply-update"
 
 func main() {
 	// First of all: a container runtime runs healthcheck every few seconds
@@ -86,14 +87,16 @@ func main() {
 	initLogger("", "")
 
 	args := os.Args[1:]
-	// install and uninstall work on the system, not on a configuration, so
-	// they parse their own flags.
+	// install, uninstall and apply-update work on the system, not on a
+	// configuration, so they parse their own flags.
 	if len(args) > 0 {
 		switch args[0] {
 		case "install":
 			os.Exit(runInstall(args[1:]))
 		case "uninstall":
 			os.Exit(runUninstall(args[1:]))
+		case "apply-update":
+			os.Exit(runApplyUpdate(args[1:]))
 		}
 	}
 	command := ""

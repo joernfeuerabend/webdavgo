@@ -47,6 +47,7 @@ func loadTemplates() {
 		"assets/activity.html",
 		"assets/logs.html",
 		"assets/about.html",
+		"assets/update.html",
 	))
 }
 
@@ -391,6 +392,9 @@ func NewAdminMux() *http.ServeMux {
 	protected.HandleFunc("GET /admin/domain", handleDomainGET)
 	protected.HandleFunc("GET /admin/domain/progress", handleDomainProgress)
 	protected.HandleFunc("GET /admin/domain/done", handleDomainDone)
+	protected.HandleFunc("GET /admin/update", handleUpdateGET)
+	protected.HandleFunc("POST /admin/update/check", handleUpdateCheck)
+	protected.HandleFunc("POST /admin/update/install", handleUpdateInstall)
 	protected.HandleFunc("GET /admin/about", handleAbout)
 
 	mux.Handle("/admin/", requireSession(protected))
@@ -894,7 +898,7 @@ func handleLogEntries(w http.ResponseWriter, r *http.Request) {
 // handleAbout shows the copyright and license notice that AGPL-3.0 section
 // 0 ("Appropriate Legal Notices") asks an interactive user interface to show.
 func handleAbout(w http.ResponseWriter, r *http.Request) {
-	renderPage(w, r, "about", map[string]any{"Page": "about"})
+	renderPage(w, r, "about", map[string]any{"Page": "about", "Version": version})
 }
 
 // certStatusData prepares the certificate status for the status and the

@@ -1,0 +1,65 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Jörn Feuerabend -->
+{{define "update"}}<!DOCTYPE html>
+<html lang="en">
+<head>{{template "head" .}}<title>webdavgo - Update</title></head>
+<body hx-boost="true" hx-headers='{"X-CSRF-Token": "{{.CSRF}}"}'>
+<div class="layout">
+  {{template "nav" .}}
+  <main>
+    <h1>Update</h1>
+    <p class="muted">webdavgo contacts GitHub only when you click "Check for updates". Only releases signed with one of the release keys built into this binary are offered. Times are UTC.</p>
+    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+
+    <div class="card">
+      <h2>Versions</h2>
+      <table>
+        <tr><th>Installed version</th><td>{{.Version}}</td></tr>
+        <tr><th>Newest available version</th><td>
+          {{if not .Check}}<span class="muted">not checked yet</span>
+          {{else if .Check.Err}}<span class="error">{{.Check.Err}}</span>
+          {{else if .Check.Latest}}{{.Check.Latest.Tag}} (<a href="{{.Check.Latest.NotesURL}}" target="_blank" rel="noopener noreferrer">release notes</a>)
+          {{else}}no newer signed release, {{.Version}} is up to date{{end}}
+        </td></tr>
+        {{if .Check}}<tr><th>Last check</th><td>{{.CheckedAt}}</td></tr>{{end}}
+      </table>
+      {{if and .Check .Check.Skipped}}
+      <p class="muted small">Newer releases that are not offered:</p>
+      <ul class="pending-list small muted">
+        {{range .Check.Skipped}}<li>{{.}}</li>{{end}}
+      </ul>
+      {{end}}
+      {{/* Not boosted: a full page load shows error pages and the browser's
+           own progress while the download runs. */}}
+      <div class="form-actions">
+        <form method="post" action="/admin/update/check" hx-boost="false">
+          {{template "csrf" .}}
+          <button type="submit" class="btn">Check for updates</button>
+        </form>
+        <form method="post" action="/admin/update/install" hx-boost="false">
+          {{template "csrf" .}}
+          <button type="submit" class="btn-primary" {{if not .CanInstall}}disabled{{end}}>Install update</button>
+        </form>
+      </div>
+      {{if .Blocked}}<p class="muted small">{{.Blocked}}</p>
+      {{else if .Pending}}<p class="muted small">An update request is waiting for the update helper.</p>
+      {{else if and .Check .Check.Latest}}<p class="muted small">Downloads {{.Check.Latest.Tag}}, then the update helper checks it again, installs it and restarts the service. Connections are interrupted briefly.</p>{{end}}
+    </div>
+
+    {{if or .Pending .Status}}
+    <div class="card">
+      <h2>Last install attempt</h2>
+      {{if .Pending}}
+      <p>The update has been downloaded and handed to the update helper. When the helper is done, the service restarts. <a href="/admin/update" hx-boost="false">Reload this page</a> to see the result.</p>
+      {{else}}
+      {{with .Status}}
+      <p class="{{if .OK}}success{{else}}error{{end}}">{{if .OK}}Success{{else}}Failed{{end}}: {{.Message}}</p>
+      {{end}}
+      {{if .StatusAt}}<p class="muted small">Reported by the update helper at {{.StatusAt}}.</p>{{end}}
+      {{end}}
+    </div>
+    {{end}}
+  </main>
+</div>
+</body>
+</html>{{end}}
