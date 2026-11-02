@@ -91,6 +91,18 @@ This copies the binary to `/usr/local/bin`, creates the `webdavgo` user,
 At the end it prints a setup URL with a one-time token and the fingerprint
 of the admin certificate.
 
+**Alternative to steps 1 and 2:** the install script does both in one
+command:
+
+```sh
+bash <(curl -fsSL https://raw.githubusercontent.com/joernfeuerabend/webdavgo/main/install.sh)
+```
+
+It checks systemd, architecture, free ports, disk space and the connection
+to GitHub, shows the version it will install and asks before it changes
+anything. Then it downloads and verifies the release and runs
+`sudo ./webdavgo install`. See [Install script](docs/installation.md#install-script).
+
 **3. Create the admin account.** Open the setup URL in a browser. The
 browser warns about a self-signed certificate: continue only if it shows
 the printed fingerprint. Create the admin account, enroll an authenticator
@@ -103,6 +115,10 @@ obtains a Let's Encrypt certificate and serves WebDAV at
 
 **5. Add users** under **Admin → Users** and connect a WebDAV client to
 `https://<your-domain>/`.
+
+**6. Uninstall.** `sudo webdavgo uninstall` removes the service and
+`sudo webdavgo uninstall -purge` also removes data, configuration and logs.
+See [Uninstall](docs/installation.md#uninstall).
 
 The admin UI listens on port 8443 on all interfaces, so on a server
 without a firewall it is reachable from the internet. To keep it private,
