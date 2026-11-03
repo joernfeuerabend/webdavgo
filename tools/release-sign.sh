@@ -12,8 +12,9 @@
 #       (default ~/.minisign), the public keys to cmd/webdavgo/keys, from
 #       where the binary embeds them. Aborts if any of the keys exists.
 #
-#   tools/release-sign.sh sign vX.Y.Z [main-secret-key]
-#       Downloads the tarballs and SHA256SUMS of release vX.Y.Z, rebuilds
+#   tools/release-sign.sh sign vX.Y.Z[-rc.N] [main-secret-key]
+#       Downloads the tarballs and SHA256SUMS of release vX.Y.Z or of a
+#       pre-release such as vX.Y.Z-rc.N (also -alpha.N, -beta.N), rebuilds
 #       the tag with "make dist" in a clean checkout and compares the
 #       binaries. Only if they are identical it signs SHA256SUMS with the
 #       main key (default ~/.minisign/webdavgo-main.key, minisign asks for
@@ -35,7 +36,7 @@ die() {
 
 usage() {
     echo "usage: tools/release-sign.sh keygen [key-dir]" >&2
-    echo "       tools/release-sign.sh sign vX.Y.Z [main-secret-key]" >&2
+    echo "       tools/release-sign.sh sign vX.Y.Z[-rc.N] [main-secret-key]" >&2
     exit 2
 }
 
@@ -87,7 +88,8 @@ EOF
 sign() {
     local tag=$1
     local key=${2:-$HOME/.minisign/webdavgo-main.key}
-    [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "release tag $tag does not match vMAJOR.MINOR.PATCH"
+    [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.(0|[1-9][0-9]{0,8}))?$ ]] \
+        || die "release tag $tag matches neither vMAJOR.MINOR.PATCH nor vMAJOR.MINOR.PATCH-(alpha|beta|rc).N"
     [[ -f "$key" ]] || die "secret key $key not found"
     [[ -f "$pubdir/main.pub" ]] || die "$pubdir/main.pub not found, run keygen first"
     local version=${tag#v}
@@ -129,7 +131,9 @@ sign() {
     gover=$(go version "$work/bin/webdavgo-amd64" | awk '{ print $2 }')
     [[ "$gover" =~ ^go[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || die "cannot read the Go version of the release binary: $gover"
     echo "Building with $gover"
-    (cd "$work/src" && env -u GOFLAGS -u GOAMD64 -u GOARM64 GOENV=off GOTOOLCHAIN="$gover" make dist)
+    # VERSION as in CI: git describe could name another tag of the same
+    # commit, such as vX.Y.Z-rc.2 for vX.Y.Z.
+    (cd "$work/src" && env -u GOFLAGS -u GOAMD64 -u GOARM64 GOENV=off GOTOOLCHAIN="$gover" make dist VERSION="$tag")
 
     local mismatch=0
     for arch in amd64 arm64
