@@ -59,6 +59,8 @@ as one `config` line.
 | `webdav_listen_address` | `""` | host name or IP address the WebDAV listener binds to, without port. Empty = all interfaces |
 | `webgui_port` | `8443` | port of the admin listener (1-65535) |
 | `webgui_listen_address` | `""` | host name or IP address the admin listener binds to, without port. Empty = all interfaces (see [Admin access](administration.md#admin-access)) |
+| `webdav_allowed_clients` | `""` | client addresses allowed to connect to the WebDAV listener: comma separated IPv4 and IPv6 addresses and CIDR prefixes. Empty = every client (see [Client address lists](#client-address-lists)) |
+| `webgui_allowed_clients` | `""` | client addresses allowed to connect to the admin listener, same format. Loopback is always allowed. Empty = every client (see [Client address lists](#client-address-lists)) |
 | `health_enabled` | `false` | run the health listener (see [Health checks](administration.md#health-checks)) |
 | `health_bind` | `"127.0.0.1"` | host name or IP address the health listener binds to, without port. Empty = all interfaces |
 | `health_port` | `8082` | port of the health listener (1-65535). Must differ from `webdav_port` and `webgui_port` |
@@ -165,6 +167,82 @@ effect with Apply on the Settings page or on the next restart. Connections
 on the old listener finish their running requests. With
 `tls_mode = "acme"` the WebDAV listener serves HTTPS only. The admin listener
 always does.
+
+## Client address lists
+
+`webdav_allowed_clients` and `webgui_allowed_clients` limit which client
+addresses may connect to the WebDAV listener and to the admin listener. An
+empty list (the default) allows every client. A non-empty list is a comma
+separated list of IPv4 and IPv6 addresses and CIDR prefixes:
+
+```toml
+webdav_allowed_clients = "192.0.2.10, 198.51.100.0/24, 2001:db8:1234::/48"
+webgui_allowed_clients = "192.0.2.10"
+```
+
+- **IPv6:** list prefixes rather than single addresses. Clients with
+  privacy extensions change their address every few hours, so a single
+  IPv6 address stops matching soon. The prefix your provider delegates to
+  your network (often a /48 or /56) covers every device in it, a /64
+  covers one network segment.
+- **Format:** an entry with host bits set beyond its prefix length (such as
+  `192.0.2.5/24`) is invalid, write `192.0.2.0/24`. Addresses with a zone
+  (`fe80::1%eth0`) are invalid. IPv4-mapped IPv6 entries
+  (`::ffff:192.0.2.10`) are taken as their IPv4 form, and so are the
+  client addresses a dual-stack socket reports, so an IPv4 entry matches
+  either way.
+- **Drop:** a connection from an address outside the list is reset (TCP
+  RST, `SO_LINGER` 0) right after accept, before TLS and before HTTP. The
+  client gets no response at all. Such connections do not count for the
+  [brute-force protection](administration.md#brute-force-protection) or the
+  [per-client limits](#per-client-limits).
+- **Admin listener and loopback:** `127.0.0.1` and `::1` (all of
+  `127.0.0.0/8`) are always allowed on the admin listener, whatever the
+  list says. Access through an SSH tunnel therefore always works (see
+  [Admin access](administration.md#admin-access)). On the Settings page,
+  Save and Apply of `webgui_allowed_clients` are refused when the address
+  of the browser making the change would not be allowed afterwards.
+- **WebDAV with `tls_mode = "acme"`:** the certificate authority validates
+  TLS-ALPN-01 on the WebDAV listener from changing addresses that cannot be
+  listed. On this listener a client outside the list is therefore not
+  dropped at accept but in the TLS handshake: a ClientHello that offers
+  anything other than `acme-tls/1` alone is answered with a reset. A
+  ClientHello that offers only `acme-tls/1` completes the handshake with
+  the challenge certificate and `acme-tls/1` as the only possible protocol,
+  and any HTTP request on such a connection is answered with a reset. No
+  data from the server is reachable that way. HTTP over `acme-tls/1` is
+  refused for every client, listed or not.
+- **Apply:** both lists take effect with Apply in **Admin → Settings →
+  Network & listeners**, without a restart. Apply also resets open
+  connections from addresses the new list no longer allows.
+- **Invalid list:** Save refuses an invalid entry and names it. An invalid
+  list in the config file stops the service at startup with
+  `ERROR "cannot load configuration"` naming the key and the entry. The
+  list is never ignored.
+- **Logging:** a dropped connection writes no log line of its own. Per
+  listener at most one Info line per minute,
+  `"connections dropped: client address not allowed"`, gives the number of
+  drops since the previous line (`count`) and up to five addresses
+  (`clients`). **Admin → Security** shows the counters (see
+  [Security page](administration.md#security-page)).
+- **Health listener:** not covered. It binds `127.0.0.1` by default and
+  answers only `/livez` and `/readyz` (see
+  [Health checks](administration.md#health-checks)).
+
+**This is not a firewall.** The kernel still completes the TCP handshake
+before webdavgo sees the connection, so the port shows as open to a port
+scan from any address. For a port that is really invisible, filter it in
+the host firewall, for example with nftables: accept the port from
+loopback and the listed IPv4 and IPv6 addresses, drop it for everything
+else.
+
+**Docker:** the lists see the source address of the connection. With
+Docker's bridge networking, connections that go through docker-proxy
+(IPv6 without IPv6 enabled in the Docker network, rootless Docker, Docker
+Desktop) all arrive with the gateway address of the Docker network. A
+list then either allows every client or none. Run the container with host
+networking (`--network host`, or `network_mode: host` in Compose) when you
+use the lists (see [Container](installation.md#container)).
 
 ## Request limits
 

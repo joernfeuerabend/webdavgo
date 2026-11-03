@@ -33,7 +33,10 @@ minimum.
   Settings page and the certificate request pages all state the address
   actually bound. To limit it, set `webgui_listen_address` in the config file
   (or on the Settings page) to a specific address, e.g. `"127.0.0.1"` for this
-  host only, or filter the port in a firewall. With a loopback address, use
+  host only, list the addresses allowed to connect in
+  `webgui_allowed_clients` (see
+  [Client address lists](configuration.md#client-address-lists), loopback
+  is always allowed), or filter the port in a firewall. With a loopback address, use
   an SSH tunnel from another machine and open `https://localhost:8443/admin/`
   locally:
 
@@ -208,6 +211,15 @@ table holds at most `bruteforce_max_entries` clients. When full, the one
 refused longest ago among the inactive ones is dropped, and `+N not tracked`
 says how many clients refused within 24 h were dropped or never recorded.
 These limits clear themselves within seconds, so there is no unlock button.
+
+A fourth table, **Client address lists**, shows per listener the running
+list (`webdav_allowed_clients`, `webgui_allowed_clients`), the connections
+dropped since the last restart because their address is not in it, the
+time of the last drop and the latest distinct addresses dropped. With
+`tls_mode = "acme"`, WebDAV handshakes that offer only `acme-tls/1` are let
+through to the challenge certificate and are not counted, HTTP requests on
+such connections are. See
+[Client address lists](configuration.md#client-address-lists).
 
 ## Authentication cache and request log
 

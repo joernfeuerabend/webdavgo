@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/caddyserver/certmagic"
-	"golang.org/x/net/netutil"
 )
 
 // domainJobTimeout bounds one run of the step. Each ACME order normally
@@ -266,13 +265,12 @@ func runDomainJob(ctx context.Context, t Config) {
 		job.finishStep(i, "ok", "WebDAV already listens on port 443 with TLS; the new certificate replaces the current one there", "")
 	} else {
 		var err error
-		ln, err = net.Listen("tcp", addr)
+		ln, err = listen(addr, "webdav", true)
 		if err != nil {
 			job.finishStep(i, "fail", "", err.Error())
 			job.fail(explainBindError(err), err)
 			return
 		}
-		ln = trackConns(netutil.LimitListener(ln, conf().MaxConnections), "webdav")
 		newSrv = newServer("webdav", running.webdavHandler)
 		newSrv.TLSConfig = webdavTLSConfig()
 		serve("webdav", newSrv, ln)

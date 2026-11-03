@@ -1001,7 +1001,27 @@ func handleSecurity(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	limitedRows, notTracked := rateLimitedRows(now)
+	type clientListRow struct {
+		Listener, Key, List, LastDrop, Recent string
+		Dropped                               int64
+	}
+	var lists []clientListRow
+	for l := range numStatListeners {
+		st := clientDrops[l].state()
+		row := clientListRow{
+			Listener: statListenerNames[l],
+			Key:      clientListKeys[l],
+			List:     strings.TrimSpace(runningClientList(conf(), l)),
+			Dropped:  st.Total,
+			Recent:   strings.Join(st.Recent, ", "),
+		}
+		if !st.Last.IsZero() {
+			row.LastDrop = formatStatusTime(st.Last)
+		}
+		lists = append(lists, row)
+	}
 	renderPage(w, r, "security", map[string]any{
+		"ClientLists": lists,
 		"Page":        "security",
 		"Clients":     clients,
 		"Accounts":    accounts,

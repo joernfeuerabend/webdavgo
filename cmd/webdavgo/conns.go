@@ -28,22 +28,40 @@ const ctxConn ctxKey = "conn"
 // encrypted bytes, which is what the link actually carries. The same bytes
 // go into the listener's 24 h statistics.
 type countingConn struct {
-	net.Conn
+	net.Conn // the *net.TCPConn from the kernel, so abortConn can reset it
 	listener statListener
 	rx, tx   atomic.Int64
 
-	// limit holds the connection's place in max_connections_per_ip; nil if
-	// the remote address is not an IP address.
+	// addr is the client address, invalid if the remote address is not an
+	// IP address. limit holds the connection's place in
+	// max_connections_per_ip; nil if addr is invalid.
+	addr   netip.Addr
 	limit  *connLimit
 	client netip.Prefix
+	// slot gives back the connection's place in max_connections.
+	slot   func()
 	closed atomic.Bool
+
+	// acme is set on the WebDAV listener with tls_mode acme, where a client
+	// outside webdav_allowed_clients is not dropped at accept but
+	// deniedAtAccept and denied, and the TLS handshake decides
+	// (clientListGetConfigForClient). denied is also set when Apply takes
+	// the address out of a list.
+	acme           bool
+	deniedAtAccept bool
+	denied         atomic.Bool
 }
 
-// Close gives the connection's per-IP place back exactly once, however
-// often net/http and crypto/tls close it.
+// Close gives the connection's per-IP place and its max_connections slot
+// back exactly once, however often net/http and crypto/tls close it.
 func (c *countingConn) Close() error {
-	if c.limit != nil && c.closed.CompareAndSwap(false, true) {
-		c.limit.release(c.client)
+	if c.closed.CompareAndSwap(false, true) {
+		if c.limit != nil {
+			c.limit.release(c.client)
+		}
+		if c.slot != nil {
+			c.slot()
+		}
 	}
 	return c.Conn.Close()
 }
@@ -66,33 +84,81 @@ func (c *countingConn) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// countingListener caps the listener at max_connections, so that a flood
+// of connections queues in the kernel instead of exhausting file
+// descriptors, and enforces the client address list and
+// max_connections_per_ip. It does what netutil.LimitListener did before,
+// without wrapping the connection: abortConn needs the *net.TCPConn.
 type countingListener struct {
 	net.Listener
 	listener statListener
+	acme     bool
+
+	sem       chan struct{}
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
-// Accept enforces max_connections_per_ip: a connection beyond the limit is
-// closed here, before the TLS handshake and before net/http sees it, and
-// Accept goes on with the next one.
-func (l countingListener) Accept() (net.Conn, error) {
+func (l *countingListener) Close() error {
+	l.closeOnce.Do(func() { close(l.done) })
+	return l.Listener.Close()
+}
+
+func (l *countingListener) release() { <-l.sem }
+
+// Accept takes a max_connections slot, then drops a connection from an
+// address outside the listener's list (clientAllowed) with a reset, before
+// the TLS handshake and before net/http sees it, and without counting it
+// for max_connections_per_ip or any other limit. On the WebDAV listener
+// with tls_mode acme such a connection is only marked; see
+// clientListGetConfigForClient. A connection beyond max_connections_per_ip
+// is closed here as well. Accept goes on with the next connection.
+func (l *countingListener) Accept() (net.Conn, error) {
 	for {
-		c, err := l.Listener.Accept()
-		if err != nil {
+		select {
+		case l.sem <- struct{}{}:
+		case <-l.done:
+			// Closed: the listener's Accept fails at once.
+			c, err := l.Listener.Accept()
+			if err == nil {
+				c.Close()
+				err = net.ErrClosed
+			}
 			return nil, err
 		}
-		cc := &countingConn{Conn: c, listener: l.listener}
+		c, err := l.Listener.Accept()
+		if err != nil {
+			l.release()
+			return nil, err
+		}
+		cc := &countingConn{Conn: c, listener: l.listener, acme: l.acme}
 		if ta, ok := c.RemoteAddr().(*net.TCPAddr); ok {
-			p := clientPrefix(ta.AddrPort().Addr())
+			cc.addr = ta.AddrPort().Addr().Unmap().WithZone("")
+			if !clientAllowed(l.listener, cc.addr) {
+				if !l.acme {
+					clientDrops[l.listener].record(cc.addr, time.Now())
+					abortConn(c)
+					l.release()
+					continue
+				}
+				cc.deniedAtAccept = true
+				cc.denied.Store(true)
+			}
+		}
+		if cc.addr.IsValid() {
+			p := clientPrefix(cc.addr)
 			cl := connLimits[l.listener]
 			n, ok := cl.acquire(p)
 			if !ok {
 				c.Close()
+				l.release()
 				connRefused(l.listener, p)
 				continue
 			}
 			stats.clientConns(l.listener, n)
 			cc.limit, cc.client = cl, p
 		}
+		cc.slot = l.release
 		return cc, nil
 	}
 }
@@ -166,10 +232,19 @@ func connRefused(l statListener, p netip.Prefix) {
 }
 
 // trackConns wraps ln so that its connections can be shown on the Status
-// page. Every listener a server from newServer runs on must be wrapped, with
-// the same listener name.
-func trackConns(ln net.Listener, listener string) net.Listener {
-	return countingListener{Listener: ln, listener: statListenerIndex(listener)}
+// page, capped at max connections (max_connections), and checked against
+// the listener's client address list. Every listener a server from
+// newServer runs on must be wrapped, with the same listener name. acme
+// marks the WebDAV listener with tls_mode acme, which must let the CA's
+// TLS-ALPN-01 validation through from any address.
+func trackConns(ln net.Listener, listener string, max int, acme bool) net.Listener {
+	return &countingListener{
+		Listener: ln,
+		listener: statListenerIndex(listener),
+		acme:     acme && statListenerIndex(listener) == statWebDAV,
+		sem:      make(chan struct{}, max),
+		done:     make(chan struct{}),
+	}
 }
 
 // activeRequest is one running request (an HTTP/2 stream or the current
@@ -255,6 +330,12 @@ func (reg *connRegistry) add(listener string, c net.Conn) *connInfo {
 	}
 	reg.conns[c] = ci
 	reg.mu.Unlock()
+	// Apply may have changed a list between Accept and here, after its
+	// sweep (enforceClientLists) ran: the check after the insert closes
+	// that gap.
+	if raw != nil {
+		raw.recheckClientList()
+	}
 	return ci
 }
 

@@ -78,6 +78,27 @@
     </div>
 
     <div class="card">
+      <h2>Client address lists</h2>
+      <p class="muted small">Connections dropped since the last restart because the client address is not in the listener's list (Settings, Network &amp; listeners). They get no response and do not count for the brute-force protection or the limits below. The admin UI always allows loopback. With tls_mode acme, WebDAV handshakes that offer only acme-tls/1 are let through to the challenge certificate and are not counted. The log gets at most one summary line per minute and listener.</p>
+      <div class="table-scroll">
+      <table id="client-list-table">
+        <thead><tr><th>Listener</th><th>List</th><th>Dropped</th><th>Last drop</th><th>Recent addresses</th></tr></thead>
+        <tbody>
+        {{range .ClientLists}}
+        <tr>
+          <td>{{.Listener}}</td>
+          <td>{{if .List}}<code>{{.List}}</code>{{else}}<span class="muted">empty, every client allowed</span>{{end}} <small class="field-key">({{.Key}})</small></td>
+          <td>{{.Dropped}}</td>
+          <td>{{if .LastDrop}}{{.LastDrop}}{{else}}<span class="muted">none</span>{{end}}</td>
+          <td>{{if .Recent}}<code>{{.Recent}}</code>{{else}}<span class="muted">none</span>{{end}}</td>
+        </tr>
+        {{end}}
+        </tbody>
+      </table>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>Rate-limited clients</h2>
       <p class="muted small">Clients held back by the per-IP connection limit ({{.PerIPLimit}} connections per listener) or the rate limit for WebDAV requests without credentials ({{.UnauthRate}}/s, burst {{.UnauthBurst}}). Both clear themselves within seconds, so there is no manual unlock. A client counts as active while it holds all its connections or has no token left, and for a minute after a refusal. Listed: active now or refused within the last 24 h.</p>
       {{if .Limited}}
