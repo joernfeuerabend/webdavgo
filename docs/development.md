@@ -12,7 +12,53 @@ make clean
 `make` stamps the version from `git describe` into the binary
 (`-ldflags "-X main.version=…"`). It is logged in the `startup` line. A plain
 `go build` reports `dev`. `make dist` builds with `CGO_ENABLED=0`, `-trimpath`
-and `-s -w`.
+and `-s -w`. `make dist VERSION=v1.2.3` sets the version explicitly, as the
+release workflow does.
+
+## Releases
+
+A release is published on GitHub from a tag `vMAJOR.MINOR.PATCH`. The
+workflow [`release.yml`](../.github/workflows/release.yml) builds the tag,
+attaches `webdavgo_<version>_linux_<arch>.tar.gz` for amd64 and arm64 and
+`SHA256SUMS`, and pushes the container image. The maintainer then runs
+`tools/release-sign.sh sign <tag>` locally. It rebuilds the tag, compares the
+binaries with the release and uploads `SHA256SUMS.minisig`. Only a signed
+release is offered on **Admin → Update** (see
+[Updates](administration.md#updates)).
+
+**Test pre-releases.** A pre-release goes through the same pipeline and the
+same signing:
+
+1. Tag the commit with a pre-release tag, `vX.Y.Z-alpha.N`, `vX.Y.Z-beta.N`
+   or `vX.Y.Z-rc.N` (N without leading zeros), and push the tag:
+
+   ```sh
+   git tag -a v0.1.6-rc.1 -m v0.1.6-rc.1
+   git push origin v0.1.6-rc.1
+   ```
+
+2. Create a GitHub release for the tag and tick **Set as a pre-release**
+   before publishing. The workflow refuses a pre-release tag on a release
+   not marked as pre-release, and a final tag on one that is.
+3. Once the workflow is done, sign it:
+
+   ```sh
+   tools/release-sign.sh sign v0.1.6-rc.1
+   ```
+
+4. On a test server, turn on `update_prereleases` and install it from the
+   Update page (see [Updates](administration.md#updates)).
+
+The tarball name and the signed `SHA256SUMS` carry the full version
+(`webdavgo_0.1.6-rc.1_linux_amd64.tar.gz`), so the update helper knows the
+version from the signed list. The container image gets only the full
+version tag (`0.1.6-rc.1`), neither the minor version tag nor `latest`. The
+install script uses the latest final release and never a pre-release.
+
+Promoting a release candidate to the final release means a new tag
+`vX.Y.Z` on the same commit and a release not marked as pre-release. The
+workflow and `release-sign.sh` build with `VERSION` set to the tag, so a
+second tag on the same commit does not change the version in the binary.
 
 Requires Go 1.26 or later. The dependencies are listed in
 [`go.mod`](../go.mod), their licenses in
