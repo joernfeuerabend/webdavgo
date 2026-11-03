@@ -312,16 +312,19 @@ var settingSections = []struct{ id, title, intro string }{
 	{"users", "Users", ""},
 	{"logging", "Logging", ""},
 	{"health", "Health", "Plain HTTP without authentication, for container runtimes, load balancers and \"webdavgo healthcheck\": /livez answers ok while the server runs, /readyz also checks that the data directory is writable and the database answers."},
+	{"updates", "Updates", "What the Update page offers. Every offered release, final or pre-release, must be signed with one of the release keys built into this binary."},
 }
 
 // settingDef describes one key. restart marks a key the running process
 // cannot change: it is fixed in a listener or server at its creation, or
-// changing it would mean replacing the global logger.
+// changing it would mean replacing the global logger. warning is shown
+// next to the field as a warning banner.
 type settingDef struct {
 	key, label, section, desc string
 	restart                   bool
 	options                   []string
 	note                      string
+	warning                   string
 }
 
 var settingDefs = []settingDef{
@@ -382,6 +385,10 @@ var settingDefs = []settingDef{
 	{key: "health_enabled", label: "Enabled", section: "health", desc: "Run the health listener."},
 	{key: "health_bind", label: "Bind address", section: "health", desc: "Host name or IP address the health listener binds to, without port; empty = all interfaces. It has no authentication; keep it on 127.0.0.1 unless something outside this host must reach it."},
 	{key: "health_port", label: "Port", section: "health", desc: "Port of the health listener; must differ from the WebDAV and admin UI ports."},
+
+	{key: "update_prereleases", label: "Offer pre-releases", section: "updates",
+		desc:    "Offer signed pre-releases (such as v1.2.3-rc.1) on the Update page besides final releases. Off: final releases only.",
+		warning: "Pre-releases are test builds. They can be unstable and can damage data or configuration. They are not meant for production servers. Turn this on only on a test server."},
 }
 
 // Every key of the file must be on the page exactly once.
@@ -486,10 +493,10 @@ func shownValue(c *Config, key string) string {
 
 // settingField is one field as the template renders it.
 type settingField struct {
-	Key, Label, Desc, Default, Value, Error, Note, Pending, Unit string
-	Options                                                      []string
-	Bool, Number, Checked, Restart, ACME, Disabled               bool
-	ReadOnly                                                     []string
+	Key, Label, Desc, Default, Value, Error, Note, Warning, Pending, Unit string
+	Options                                                               []string
+	Bool, Number, Checked, Restart, ACME, Disabled                        bool
+	ReadOnly                                                              []string
 }
 
 // settingSectionView is one card; Notice, Error and Links report the last
@@ -548,7 +555,7 @@ func settingsData(saved Config, loadErr error, v settingsView) map[string]any {
 		for _, d := range defsOf(s.id) {
 			val := configValue(&saved, d.key)
 			f := settingField{
-				Key: d.key, Label: d.label, Desc: d.desc, Note: d.note, Restart: d.restart, Options: d.options,
+				Key: d.key, Label: d.label, Desc: d.desc, Note: d.note, Warning: d.warning, Restart: d.restart, Options: d.options,
 				Default: shownValue(&def, d.key), Value: formValue(&saved, d.key),
 				ReadOnly: readOnlyReasons(d.key), Error: errs[d.key], Unit: configUnit(d.key),
 			}

@@ -925,10 +925,11 @@ func handleAbout(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// releaseURL is the GitHub release page of v, or "" for a development build
-// that has no release version.
+// releaseURL is the GitHub release page of v, a release or pre-release
+// version such as v1.2.3 or v1.2.3-rc.1. It is "" for "dev" and for a
+// described build such as v1.2.3-4-gabcdef, which have no release page.
 func releaseURL(v string) string {
-	if _, ok := parseReleaseVersion(v); !ok || !strings.HasPrefix(v, "v") {
+	if sv, ok := parseReleaseVersion(v); !ok || sv.build != "" || v != "v"+sv.String() {
 		return ""
 	}
 	return "https://github.com/" + updateRepo + "/releases/tag/" + v

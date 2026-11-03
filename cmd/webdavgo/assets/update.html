@@ -10,6 +10,7 @@
     <h1>Update</h1>
     <p class="muted">webdavgo contacts GitHub only when you click "Check for updates". Only releases signed with one of the release keys built into this binary are offered. Times are UTC.</p>
     {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+    {{if .Prereleases}}<p class="banner banner-warn" role="note"><strong>Pre-releases are offered.</strong> update_prereleases is on (<a href="/admin/settings#updates">Settings, Updates</a>), so a check also offers signed pre-releases. Pre-releases are test builds: they can be unstable and can damage data or configuration. They are not meant for production servers.</p>{{end}}
 
     <div class="card">
       <h2>Versions</h2>
@@ -18,11 +19,12 @@
         <tr><th>Newest available version</th><td>
           {{if not .Check}}<span class="muted">not checked yet</span>
           {{else if .Check.Err}}<span class="error">{{.Check.Err}}</span>
-          {{else if .Check.Latest}}{{.Check.Latest.Tag}} (<a href="{{.Check.Latest.NotesURL}}" target="_blank" rel="noopener noreferrer">release notes</a>)
-          {{else}}no newer signed release, {{.Version}} is up to date{{end}}
+          {{else if .Check.Latest}}{{.Check.Latest.Tag}}{{if .Check.Latest.Prerelease}} <span class="role-badge prerelease-badge">pre-release</span>{{end}} (<a href="{{.Check.Latest.NotesURL}}" target="_blank" rel="noopener noreferrer">release notes</a>)
+          {{else}}no newer signed {{if .Check.Prereleases}}release or pre-release{{else}}release{{end}}, {{.Version}} is up to date{{end}}
         </td></tr>
         {{if .Check}}<tr><th>Last check</th><td>{{.CheckedAt}}</td></tr>{{end}}
       </table>
+      {{if .Withdrawn}}<p class="error">{{.Check.Latest.Tag}} is a pre-release, and update_prereleases has been turned off since the check. Check for updates again.</p>{{end}}
       {{if and .Check .Check.Skipped}}
       <p class="muted small">Newer releases that are not offered:</p>
       <ul class="pending-list small muted">
@@ -45,7 +47,8 @@
       </div>
       {{if .CanInstall}}
       <dialog id="update-confirm" class="confirm-dialog" aria-labelledby="update-confirm-title">
-        <h2 id="update-confirm-title">Install {{.Check.Latest.Tag}}?</h2>
+        <h2 id="update-confirm-title">Install {{if .Check.Latest.Prerelease}}pre-release {{end}}{{.Check.Latest.Tag}}?</h2>
+        {{if .Check.Latest.Prerelease}}<p class="banner banner-warn" role="note">{{.Check.Latest.Tag}} is a pre-release. Pre-releases are test builds: they can be unstable and can damage data or configuration. They are not meant for production servers.</p>{{end}}
         <p>webdavgo downloads {{.Check.Latest.Tag}}, then the update helper installs it and restarts the service. Connections are interrupted briefly and you are logged out. Sign in again to see the result.</p>
         <div class="form-actions">
           <button type="button" class="btn" data-update-cancel>Cancel</button>
