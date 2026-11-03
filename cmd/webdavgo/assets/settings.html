@@ -39,7 +39,10 @@
       <form method="post" action="/admin/settings/{{.ID}}" hx-push-url="/admin/settings"
             hx-swap="innerHTML show:#{{.ID}}:top">
         {{template "csrf" $}}
-        {{range .Fields}}{{template "setting-field" .}}{{end}}
+        {{range .Groups}}{{if .Title}}<div class="setting-group">
+          <h3>{{.Title}}</h3>
+          {{range .Fields}}{{template "setting-field" .}}{{end}}
+        </div>{{else}}{{range .Fields}}{{template "setting-field" .}}{{end}}{{end}}{{end}}
         <div class="form-actions">
           <button type="submit" name="action" value="save">Save</button>
           <button type="submit" name="action" value="apply" class="btn">Apply</button>

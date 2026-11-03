@@ -321,29 +321,38 @@ var settingSections = []struct{ id, title, intro string }{
 // next to the field as a warning banner.
 type settingDef struct {
 	key, label, section, desc string
-	restart                   bool
-	options                   []string
-	note                      string
-	warning                   string
+	// group is the subheading of the key within its section; "" for a
+	// section without groups.
+	group   string
+	restart bool
+	options []string
+	note    string
+	warning string
 }
 
 var settingDefs = []settingDef{
-	{key: "webdav_port", label: "WebDAV port", section: "network", desc: "Port of the WebDAV listener. With tls_mode acme, external port 443 must reach it; the certificate request sets 443."},
-	{key: "webdav_listen_address", label: "WebDAV listen address", section: "network", desc: "Host name or IP address the WebDAV listener binds to, without port; empty = all interfaces."},
-	{key: "webgui_port", label: "Admin UI port", section: "network", desc: "Port of the admin UI (HTTPS only).",
-		note: "After Apply the admin UI is reachable only at the new port."},
-	{key: "webgui_listen_address", label: "Admin UI listen address", section: "network", desc: "Host name or IP address the admin UI binds to, without port; empty = all interfaces; 127.0.0.1 limits it to this host or an SSH tunnel.",
-		note: "After Apply the admin UI is reachable only at the new address."},
-	{key: "webdav_allowed_clients", label: "WebDAV allowed clients", section: "network",
+	// The network section in three groups: one per listener, with the same
+	// keys in the same order, and the settings both listeners share.
+	{key: "webdav_port", label: "Port", section: "network", group: "WebDAV",
+		desc: "Port of the WebDAV listener. With tls_mode acme, external port 443 must reach it. The certificate request sets 443."},
+	{key: "webdav_listen_address", label: "Listen address", section: "network", group: "WebDAV",
+		desc: "Host name or IP address the WebDAV listener binds to, without port. Empty = all interfaces."},
+	{key: "webdav_allowed_clients", label: "Allowed clients", section: "network", group: "WebDAV",
 		desc: "Client addresses allowed to connect to WebDAV: IPv4 and IPv6 addresses and CIDR prefixes, comma separated, for example 192.0.2.10, 198.51.100.0/24, 2001:db8:1234::/48. Empty = every client. Connections from other addresses are reset right after accept, without any response. With tls_mode acme, a TLS handshake that offers only acme-tls/1 (the certificate authority's validation) still gets the challenge certificate, and nothing else.",
 		note: "Apply resets open WebDAV connections from addresses no longer allowed."},
-	{key: "webgui_allowed_clients", label: "Admin UI allowed clients", section: "network",
-		desc: "Client addresses allowed to connect to the admin UI, in the same format. Empty = every client. Connections from other addresses are reset right after accept, without any response.",
+	{key: "webgui_port", label: "Port", section: "network", group: "Admin UI",
+		desc: "Port of the admin UI (HTTPS only).",
+		note: "After Apply the admin UI is reachable only at the new port."},
+	{key: "webgui_listen_address", label: "Listen address", section: "network", group: "Admin UI",
+		desc: "Host name or IP address the admin UI binds to, without port. Empty = all interfaces. 127.0.0.1 limits it to this host or an SSH tunnel.",
+		note: "After Apply the admin UI is reachable only at the new address."},
+	{key: "webgui_allowed_clients", label: "Allowed clients", section: "network", group: "Admin UI",
+		desc: "Client addresses allowed to connect to the admin UI, in the same format as for WebDAV. Empty = every client. Connections from other addresses are reset right after accept, without any response.",
 		note: "Loopback (127.0.0.1 and ::1) is always allowed, so the admin UI stays reachable through an SSH tunnel. Save and Apply are refused if your current address would not be allowed afterwards."},
-	{key: "shutdown_timeout", label: "Shutdown timeout", section: "network", desc: "How long a stop waits for running requests before cutting them."},
-	{key: "read_header_timeout", label: "Request header timeout", section: "network", desc: "Maximum time a client may take to send the request headers.", restart: true},
-	{key: "idle_timeout", label: "Keep-alive idle timeout", section: "network", desc: "How long an idle keep-alive connection stays open.", restart: true},
-	{key: "http2_max_concurrent_streams", label: "Max. HTTP/2 streams per connection", section: "network", desc: "Parallel requests per HTTP/2 connection.", restart: true},
+	{key: "shutdown_timeout", label: "Shutdown timeout", section: "network", group: "Both listeners", desc: "How long a stop waits for running requests before cutting them."},
+	{key: "read_header_timeout", label: "Request header timeout", section: "network", group: "Both listeners", desc: "Maximum time a client may take to send the request headers.", restart: true},
+	{key: "idle_timeout", label: "Keep-alive idle timeout", section: "network", group: "Both listeners", desc: "How long an idle keep-alive connection stays open.", restart: true},
+	{key: "http2_max_concurrent_streams", label: "Max. HTTP/2 streams per connection", section: "network", group: "Both listeners", desc: "Parallel requests per HTTP/2 connection.", restart: true},
 
 	{key: "tls_mode", label: "TLS mode", section: "tls", options: []string{"off", "acme"},
 		desc: "off: plain HTTP, credentials in clear text (development or trusted LAN only). acme: WebDAV serves TLS only, with a certificate obtained via TLS-ALPN-01; external port 443 of the domain must reach the WebDAV listener.",
@@ -510,7 +519,14 @@ type settingField struct {
 type settingSectionView struct {
 	ID, Title, Intro, Notice, Error string
 	Links                           []string
-	Fields                          []settingField
+	Groups                          []settingGroupView
+}
+
+// settingGroupView is one group of fields in a section, in the order of
+// settingDefs. A section without groups has one group without a title.
+type settingGroupView struct {
+	Title  string
+	Fields []settingField
 }
 
 // settingsView carries what the last request did to one section: the
@@ -593,7 +609,11 @@ func settingsData(saved Config, loadErr error, v settingsView) map[string]any {
 					f.Pending = "Saved; not applied yet (running: " + running + ")."
 				}
 			}
-			sv.Fields = append(sv.Fields, f)
+			if n := len(sv.Groups); n == 0 || sv.Groups[n-1].Title != d.group {
+				sv.Groups = append(sv.Groups, settingGroupView{Title: d.group})
+			}
+			g := &sv.Groups[len(sv.Groups)-1]
+			g.Fields = append(g.Fields, f)
 		}
 		sections = append(sections, sv)
 	}

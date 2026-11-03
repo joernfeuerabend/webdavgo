@@ -232,6 +232,15 @@ pre.cmd {
 .field small.field-restart, .field small.field-pending { color: #e0a030; }
 .field small.field-note { color: var(--text); }
 .field .field-warning { margin: .5rem 0 0; }
+.setting-group {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: rgba(255,255,255,.02);
+  padding: .9rem 1rem .1rem;
+  margin-bottom: 1rem;
+}
+.setting-group h3 { font-size: .95rem; margin-bottom: .75rem; }
 .form-actions { display: flex; gap: .5rem; margin-top: .5rem; }
 .reset-form { margin-top: .75rem; }
 .pending-list { margin: .5rem 0 0 1.25rem; }
