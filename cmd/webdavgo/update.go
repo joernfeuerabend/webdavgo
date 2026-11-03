@@ -285,6 +285,13 @@ var updateState struct {
 	sync.Mutex
 	check      *updateCheck
 	installing bool
+	// requested is set once this process has handed an update to the
+	// helper. The helper removes the request file as its first step,
+	// often before the browser follows the redirect to the Update page.
+	// Until the helper writes updateStatusFile, the page still shows the
+	// update as pending. A successful update restarts the process, which
+	// clears the flag.
+	requested bool
 }
 
 var updateClient = &http.Client{Transport: http.DefaultTransport}
@@ -499,13 +506,22 @@ func readUpdateStatus() *updateStatus {
 	return &st
 }
 
+// updatePending reports whether the Update page shows an update as handed
+// to the helper and not finished yet: the request file is still there, or
+// this process requested an update and the helper has not reported yet.
+func updatePending(requestFile, requested bool, status *updateStatus) bool {
+	return requestFile || (requested && status == nil)
+}
+
 // ---- handlers ------------------------------------------------------------------------
 
 func renderUpdate(w http.ResponseWriter, r *http.Request, status int, errMsg string) {
 	updateState.Lock()
 	check := updateState.check
+	requested := updateState.requested
 	updateState.Unlock()
-	pending := updateRequestPending()
+	st := readUpdateStatus()
+	pending := updatePending(updateRequestPending(), requested, st)
 	blocked := installBlocked()
 	data := map[string]any{
 		"Page":       "update",
@@ -514,13 +530,13 @@ func renderUpdate(w http.ResponseWriter, r *http.Request, status int, errMsg str
 		"Check":      check,
 		"Pending":    pending,
 		"Blocked":    blocked,
-		"Status":     readUpdateStatus(),
+		"Status":     st,
 		"CanInstall": check != nil && check.Latest != nil && blocked == "" && !pending,
 	}
 	if check != nil {
 		data["CheckedAt"] = formatStatusTime(check.Time)
 	}
-	if st, _ := data["Status"].(*updateStatus); st != nil && !st.Time.IsZero() {
+	if st != nil && !st.Time.IsZero() {
 		data["StatusAt"] = formatStatusTime(st.Time)
 	}
 	if status != http.StatusOK {
@@ -557,15 +573,22 @@ func handleUpdateInstall(w http.ResponseWriter, r *http.Request) {
 		renderUpdate(w, r, http.StatusConflict, msg)
 		return
 	}
-	if updateRequestPending() {
+	updateState.Lock()
+	check := updateState.check
+	requested := updateState.requested
+	updateState.Unlock()
+	if updatePending(updateRequestPending(), requested, readUpdateStatus()) {
 		renderUpdate(w, r, http.StatusConflict, "An update request is already waiting for the update helper.")
 		return
 	}
 	updateState.Lock()
-	check := updateState.check
 	busy := updateState.installing
 	if !busy {
 		updateState.installing = true
+		// requestUpdate removes the last status first. If it then fails,
+		// an earlier request must not leave the page waiting for a
+		// report that never comes.
+		updateState.requested = false
 	}
 	updateState.Unlock()
 	if busy {
@@ -588,6 +611,9 @@ func handleUpdateInstall(w http.ResponseWriter, r *http.Request) {
 		renderUpdate(w, r, http.StatusBadGateway, "The update could not be prepared: "+err.Error())
 		return
 	}
+	updateState.Lock()
+	updateState.requested = true
+	updateState.Unlock()
 	logger.Info("update requested, the update helper installs it and restarts the service",
 		"installed", version, "tag", check.Latest.Tag, "by", currentUser(r))
 	http.Redirect(w, r, "/admin/update", http.StatusSeeOther)
