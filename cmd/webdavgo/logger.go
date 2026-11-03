@@ -292,6 +292,10 @@ func (w serverErrorWriter) Write(p []byte) (int, error) {
 	msg := strings.TrimRight(string(p), "\n")
 	level := slog.LevelWarn
 	switch {
+	case strings.Contains(msg, errClientNotAllowed.Error()):
+		// A connection outside the client address list, counted by
+		// clientDrops, which also logs a summary.
+		return len(p), nil
 	case strings.Contains(msg, "TLS handshake error"):
 		level = slog.LevelDebug
 		stats.tlsError(statListenerIndex(w.listener))

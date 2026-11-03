@@ -87,6 +87,13 @@ type Config struct {
 	WebGUIPort          int    `toml:"webgui_port"`
 	WebGUIListenAddress string `toml:"webgui_listen_address"`
 
+	// The client address lists (clientlist.go): comma separated IPv4 and
+	// IPv6 addresses and CIDR prefixes allowed to connect, empty allows
+	// every client. Apply sets them and resets the connections they no
+	// longer allow.
+	WebDAVAllowedClients string `toml:"webdav_allowed_clients"`
+	WebGUIAllowedClients string `toml:"webgui_allowed_clients"`
+
 	// The health listener: plain HTTP without authentication, /livez and
 	// /readyz only, for container runtimes, load balancers and
 	// "webdavgo healthcheck".
@@ -1069,6 +1076,9 @@ func (c Config) checkGeneral() []fieldError {
 			add(a.name, "%s %q: must be empty (all interfaces) or a host name or IP address, without port", a.name, a.v)
 		}
 	}
+	// A list that does not parse stops the start: ignoring it would open
+	// the listener to every client.
+	errs = append(errs, c.checkClientLists()...)
 	if c.DefaultQuota < 0 || c.DefaultQuota > maxQuotaGB*1_000_000_000 {
 		add("default_quota", "default_quota must be between 0 (unlimited) and %d GB", maxQuotaGB)
 	}
@@ -1237,6 +1247,8 @@ func (c Config) logAttrs() []any {
 		"unauth_rate", c.UnauthRate,
 		"unauth_burst", c.UnauthBurst,
 		"log_buffer_entries", c.LogBufferEntries,
+		"webdav_allowed_clients", c.WebDAVAllowedClients,
+		"webgui_allowed_clients", c.WebGUIAllowedClients,
 		"health_enabled", c.HealthEnabled,
 		"health_bind", c.HealthBind,
 		"health_port", c.HealthPort,

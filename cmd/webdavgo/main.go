@@ -21,7 +21,6 @@ import (
 	"syscall"
 	"time"
 
-	"golang.org/x/net/netutil"
 	"golang.org/x/net/webdav"
 )
 
@@ -243,12 +242,12 @@ func main() {
 
 	var webdavLn net.Listener
 	if webdavOn {
-		if webdavLn, err = listen(webdavAddr, "webdav"); err != nil {
+		if webdavLn, err = listen(webdavAddr, "webdav", currentCerts() != nil); err != nil {
 			logger.Error("webdav listener failed", "addr", webdavAddr, "err", err)
 			os.Exit(1)
 		}
 	}
-	webguiLn, err := listen(webguiAddr, "admin")
+	webguiLn, err := listen(webguiAddr, "admin", false)
 	if err != nil {
 		logger.Error("webgui listener failed", "addr", webguiAddr, "err", err)
 		os.Exit(1)
@@ -392,13 +391,14 @@ func isLoopbackAddr(addr string) bool {
 
 // listen opens a TCP listener capped at max_connections so that a flood of
 // connections queues in the kernel instead of exhausting file descriptors.
-// listener names it for the Status page, as in newServer.
-func listen(addr, listener string) (net.Listener, error) {
+// listener names it for the Status page, as in newServer. acme marks the
+// WebDAV listener that serves TLS with an ACME certificate (trackConns).
+func listen(addr, listener string, acme bool) (net.Listener, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", addr, err)
 	}
-	return trackConns(netutil.LimitListener(ln, conf().MaxConnections), listener), nil
+	return trackConns(ln, listener, conf().MaxConnections, acme), nil
 }
 
 // requestTracker counts running handlers so that a forced shutdown can wait
@@ -452,6 +452,11 @@ func newServer(listener string, h http.Handler) *http.Server {
 	sl := statListenerIndex(listener)
 	return &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Before anything counts the request: a connection outside the
+			// client address list gets no response at all.
+			if rejectDeniedConn(r) {
+				panic(http.ErrAbortHandler)
+			}
 			running.inflight.start()
 			defer running.inflight.done()
 			if ci, _ := r.Context().Value(ctxConn).(*connInfo); ci != nil {

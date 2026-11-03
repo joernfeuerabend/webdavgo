@@ -334,6 +334,12 @@ var settingDefs = []settingDef{
 		note: "After Apply the admin UI is reachable only at the new port."},
 	{key: "webgui_listen_address", label: "Admin UI listen address", section: "network", desc: "Host name or IP address the admin UI binds to, without port; empty = all interfaces; 127.0.0.1 limits it to this host or an SSH tunnel.",
 		note: "After Apply the admin UI is reachable only at the new address."},
+	{key: "webdav_allowed_clients", label: "WebDAV allowed clients", section: "network",
+		desc: "Client addresses allowed to connect to WebDAV: IPv4 and IPv6 addresses and CIDR prefixes, comma separated, for example 192.0.2.10, 198.51.100.0/24, 2001:db8:1234::/48. Empty = every client. Connections from other addresses are reset right after accept, without any response. With tls_mode acme, a TLS handshake that offers only acme-tls/1 (the certificate authority's validation) still gets the challenge certificate, and nothing else.",
+		note: "Apply resets open WebDAV connections from addresses no longer allowed."},
+	{key: "webgui_allowed_clients", label: "Admin UI allowed clients", section: "network",
+		desc: "Client addresses allowed to connect to the admin UI, in the same format. Empty = every client. Connections from other addresses are reset right after accept, without any response.",
+		note: "Loopback (127.0.0.1 and ::1) is always allowed, so the admin UI stays reachable through an SSH tunnel. Save and Apply are refused if your current address would not be allowed afterwards."},
 	{key: "shutdown_timeout", label: "Shutdown timeout", section: "network", desc: "How long a stop waits for running requests before cutting them."},
 	{key: "read_header_timeout", label: "Request header timeout", section: "network", desc: "Maximum time a client may take to send the request headers.", restart: true},
 	{key: "idle_timeout", label: "Keep-alive idle timeout", section: "network", desc: "How long an idle keep-alive connection stays open.", restart: true},
@@ -655,6 +661,12 @@ func handleSettingsPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	next, form, errs := parseSection(id, saved, r)
+	if slices.ContainsFunc(defsOf(id), func(d settingDef) bool { return d.key == "webgui_allowed_clients" }) &&
+		errs["webgui_allowed_clients"] == "" {
+		if err := adminLockoutError(next.WebGUIAllowedClients, r.RemoteAddr); err != nil {
+			errs["webgui_allowed_clients"] = err.Error()
+		}
+	}
 	if len(errs) > 0 {
 		v.errMsg, v.form, v.errs = "Nothing was saved: correct the marked fields.", form, errs
 		renderPage(w, r, "settings", settingsData(saved, nil, v))
@@ -707,7 +719,7 @@ func handleSettingsPOST(w http.ResponseWriter, r *http.Request) {
 		renderPage(w, r, "settings", settingsData(saved, nil, v))
 		return
 	}
-	if err := applySection(id, saved, currentUser(r), &v); err != nil {
+	if err := applySection(id, saved, currentUser(r), r.RemoteAddr, &v); err != nil {
 		v.errMsg = err.Error()
 	}
 	renderPage(w, r, "settings", settingsData(saved, nil, v))
@@ -815,10 +827,22 @@ func parseSection(id string, saved Config, r *http.Request) (Config, map[string]
 // running process can take them, and reports the outcome in v. TLS values
 // with tls_mode acme are not its business: they take effect through the
 // certificate request, which the TLS section's POST starts itself.
-func applySection(id string, saved Config, by string, v *settingsView) error {
+func applySection(id string, saved Config, by, remoteAddr string, v *settingsView) error {
 	for _, fe := range saved.fieldErrors() {
 		if slices.ContainsFunc(defsOf(id), func(d settingDef) bool { return d.key == fe.Key }) {
 			return fmt.Errorf("not applied: the saved %s is invalid: %w", fe.Key, fe.Err)
+		}
+	}
+	// The saved list may come from a hand edit or from a Save made at
+	// another address: Apply checks it against the address of this
+	// request, and applies nothing of the section if it would lock the
+	// requester out.
+	if slices.ContainsFunc(defsOf(id), func(d settingDef) bool { return d.key == "webgui_allowed_clients" }) {
+		if err := adminLockoutError(saved.WebGUIAllowedClients, remoteAddr); err != nil {
+			v.errs = map[string]string{"webgui_allowed_clients": err.Error()}
+			logger.Warn("settings not applied: admin client list would lock out the requester",
+				"section", id, "client", addrHost(remoteAddr), "by", by)
+			return err
 		}
 	}
 	var applied, waiting []string
@@ -842,6 +866,13 @@ func applySection(id string, saved Config, by string, v *settingsView) error {
 	setConf(next)
 	cfgMu.Unlock()
 	applyRuntime(conf())
+	var reset int
+	if slices.ContainsFunc(applied, func(k string) bool { return slices.Contains(clientListKeys[:], k) }) {
+		reset = running.conns.enforceClientLists()
+		if reset > 0 {
+			logger.Info("connections reset: client address no longer allowed", "count", reset, "by", by)
+		}
+	}
 
 	var notes []string
 	var errs []error
@@ -884,6 +915,9 @@ func applySection(id string, saved Config, by string, v *settingsView) error {
 	}
 	switch {
 	case len(applied) > 0:
+		if reset > 0 {
+			notes = append([]string{fmt.Sprintf("Reset %d open connection(s) from addresses no longer allowed.", reset)}, notes...)
+		}
 		notes = append([]string{"Applied: " + strings.Join(applied, ", ") + "."}, notes...)
 	case len(waiting) == 0 && len(errs) == 0:
 		notes = append(notes, "Nothing to apply: the running values already match the saved ones.")
@@ -928,7 +962,7 @@ func rebindWebDAV(port int, host string) (string, error) {
 	on := tlsOn || !c.RequireTLS || isLoopbackAddr(addr)
 	var srv *http.Server
 	if on {
-		ln, err := listen(addr, "webdav")
+		ln, err := listen(addr, "webdav", tlsOn)
 		if err != nil {
 			return "", fmt.Errorf("webdav_port/webdav_listen_address not applied (they take effect after a service restart): %w", err)
 		}
@@ -970,7 +1004,7 @@ func rebindWebGUI(port int, host string) error {
 	running.mu.Lock()
 	old := running.webgui
 	running.mu.Unlock()
-	ln, err := listen(addr, "admin")
+	ln, err := listen(addr, "admin", false)
 	if err != nil {
 		return fmt.Errorf("webgui_port/webgui_listen_address not applied (they take effect after a service restart): %w", err)
 	}

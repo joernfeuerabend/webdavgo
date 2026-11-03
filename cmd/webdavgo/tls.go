@@ -103,7 +103,7 @@ var errNoCertificate = errors.New("no certificate available yet")
 // certificate is looked up per handshake, so the domain wizard can hand the
 // listener a new provider without restarting it.
 func webdavTLSConfig() *tls.Config {
-	return &tls.Config{
+	c := &tls.Config{
 		MinVersion: tls.VersionTLS12,
 		// The HTTP protocols come first so that normal clients negotiate
 		// them; acme-tls/1 is only for the CA's TLS-ALPN-01 validation.
@@ -116,6 +116,10 @@ func webdavTLSConfig() *tls.Config {
 			return p.TLSConfig().GetCertificate(hello)
 		},
 	}
+	// Clients outside webdav_allowed_clients are decided here, not at
+	// accept: the CA validates TLS-ALPN-01 from addresses nobody can list.
+	c.GetConfigForClient = clientListGetConfigForClient(c)
+	return c
 }
 
 // tlsStatus is a snapshot of the certificate state.

@@ -351,6 +351,12 @@ networks:
 With `docker run`, create a network with `docker network create --ipv6
 webdavgo` and add `--network webdavgo`.
 
+The [client address lists](configuration.md#client-address-lists)
+(`webdav_allowed_clients`, `webgui_allowed_clients`) see the same source
+address. Connections that docker-proxy forwards all arrive with the gateway
+address of the Docker network, so a list can only tell clients apart with
+host networking (`--network host`, or `network_mode: host` in Compose).
+
 **Verify the signature.** Each image is signed with cosign in keyless mode
 by the release workflow of `joernfeuerabend/webdavgo`:
 
