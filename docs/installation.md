@@ -56,7 +56,7 @@ fingerprint (see [Admin access](administration.md#admin-access)), and enter
 the token on the setup page. The direct links carry the token and skip that
 step. Then create the admin account. Setup then
 continues directly with the TOTP enrolment for that account. It is complete,
-and WebDAV starts serving (503 until then), once a first code is confirmed and
+and WebDAV starts serving user accounts (503 until then), once a first code is confirmed and
 the recovery codes have been shown. No restart is needed.
 
 The token is stored in the database and survives a restart. `webdavgo
@@ -138,7 +138,8 @@ Linux with systemd. `-root DIR` writes everything below `DIR` instead and skips
 the user and systemctl steps (used by test.sh).
 
 Then, in the browser: setup (admin account) → TOTP → **Domain &
-certificate** → done.
+certificate** → done. The admin account cannot use WebDAV. Create the
+accounts for WebDAV clients under **Admin → Users** afterwards.
 
 **`webdavgo setup-info`** prints the same information again at any time
 (`sudo webdavgo setup-info`). As root it

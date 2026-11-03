@@ -32,7 +32,9 @@ var assetsFS embed.FS
 var tmpls *template.Template
 
 func loadTemplates() {
-	tmpls = template.Must(template.New("").ParseFS(assetsFS,
+	tmpls = template.Must(template.New("").Funcs(template.FuncMap{
+		"suggestPassword": suggestPassword,
+	}).ParseFS(assetsFS,
 		"assets/layout.html",
 		"assets/login.html",
 		"assets/admin.html",
@@ -376,6 +378,7 @@ func NewAdminMux() *http.ServeMux {
 	protected.HandleFunc("GET /admin/dashboard/webdav", handleDashboardWebDAV)
 	protected.HandleFunc("GET /admin/users", handleUsersGET)
 	protected.HandleFunc("POST /admin/users", handleUsersCreate)
+	protected.HandleFunc("GET /admin/users/password-suggestion", handlePasswordSuggestion)
 	protected.HandleFunc("POST /admin/users/{name}/delete", handleUserDelete)
 	protected.HandleFunc("POST /admin/users/{name}/reset", handleUserReset)
 	protected.HandleFunc("POST /admin/users/{name}/quota", handleUserQuota)
@@ -632,7 +635,7 @@ func handleUsersCreate(w http.ResponseWriter, r *http.Request) {
 	var errMsg string
 	if !usernameRE.MatchString(uname) {
 		errMsg = "Username must be 3–32 chars: lowercase letters, digits, - or _"
-	} else if len(pw) < 8 {
+	} else if !passwordLongEnough(pw) {
 		errMsg = "Password must be at least 8 characters"
 	} else if quotaErr != nil {
 		errMsg = quotaFieldError
@@ -651,6 +654,22 @@ func handleUsersCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	logger.Info("user created", "username", uname, "role", role, "quota_bytes", quota, "by", currentUser(r))
 	http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
+}
+
+// handlePasswordSuggestion answers the "New suggestion" button of the Add
+// user and password reset forms with a password field holding a fresh
+// suggestion. field is the name of the input to replace.
+func handlePasswordSuggestion(w http.ResponseWriter, r *http.Request) {
+	field := r.URL.Query().Get("field")
+	if field != "password" && field != "new_password" {
+		http.Error(w, "unknown field", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if err := tmpls.ExecuteTemplate(w, "password-field", field); err != nil {
+		logger.Error("template error", "name", "password-field", "err", err)
+	}
 }
 
 func handleUserQuota(w http.ResponseWriter, r *http.Request) {
@@ -701,7 +720,7 @@ func handleUserDelete(w http.ResponseWriter, r *http.Request) {
 func handleUserReset(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	pw := r.FormValue("new_password")
-	if len(pw) < 8 {
+	if !passwordLongEnough(pw) {
 		http.Error(w, "password must be at least 8 characters", http.StatusBadRequest)
 		return
 	}

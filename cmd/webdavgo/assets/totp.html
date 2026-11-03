@@ -68,6 +68,8 @@
     {{range .Codes}}<li><code>{{.}}</code></li>
     {{end}}
   </ul>
+  {{if .InSetup}}<p>{{.Username}} is an admin account and cannot use WebDAV. To sync files, create a user account
+     under Admin → Users once setup is complete.</p>{{end}}
   <p><a class="btn btn-primary" href="{{.Next}}" hx-boost="false">I have saved them – continue</a></p>
   {{if .InSetup}}<p class="warranty">This program comes with ABSOLUTELY NO WARRANTY.</p>{{end}}
 </div>

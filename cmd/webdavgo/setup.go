@@ -258,7 +258,7 @@ func processSetup(w http.ResponseWriter, r *http.Request) error {
 		renderSetup(w, r, uname, "Username must be 3–32 characters: lowercase letters, digits, - or _")
 		return fmt.Errorf("invalid username")
 	}
-	if len(pw) < 8 {
+	if !passwordLongEnough(pw) {
 		renderSetup(w, r, uname, "Password must be at least 8 characters")
 		return fmt.Errorf("short password")
 	}
@@ -298,7 +298,7 @@ var setupTmpl = template.Must(template.New("setup").Parse(`<!DOCTYPE html>
 <body>
 <div class="setup-wrap">
   <h1>webdavgo – First-run Setup</h1>
-  <p>Create the initial admin account. You can add more users from the admin UI afterwards.</p>
+  <p>Create the initial admin account. It signs in to the admin UI only and cannot use WebDAV or the share API. Create the accounts for WebDAV clients under Admin → Users afterwards.</p>
   <p>Next step: set up two-factor authentication (TOTP) for this account. Have an authenticator app ready.</p>
   {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
   <form method="post" action="/setup?token={{.Token}}" hx-boost="false">

@@ -106,7 +106,7 @@ anything. Then it downloads and verifies the release and runs
 **3. Create the admin account.** Open the setup URL in a browser. The
 browser warns about a self-signed certificate: continue only if it shows
 the printed fingerprint. Create the admin account, enroll an authenticator
-app and store the recovery codes.
+app and store the recovery codes. This account is for the admin UI only.
 
 **4. Get the certificate.** Setup continues with **Domain & certificate**.
 Enter your domain and select **Apply**. webdavgo checks DNS and port 443,
@@ -114,7 +114,13 @@ obtains a Let's Encrypt certificate and serves WebDAV at
 `https://<your-domain>/`. No restart is needed.
 
 **5. Add users** under **Admin → Users** and connect a WebDAV client to
-`https://<your-domain>/`.
+`https://<your-domain>/`. The password field holds a random suggestion
+(four groups of five characters, the dashes belong to the password), and
+**New suggestion** generates another one. An admin account cannot use WebDAV
+or the share API, not even with the correct password. If you administer the
+server and also want to sync files, create a second account with role user,
+for example `alice` for WebDAV next to `alice-admin` for the admin UI. See
+[Users and roles](docs/administration.md#users-and-roles).
 
 **6. Uninstall.** `sudo webdavgo uninstall` removes the service and
 `sudo webdavgo uninstall -purge` also removes data, configuration and logs.

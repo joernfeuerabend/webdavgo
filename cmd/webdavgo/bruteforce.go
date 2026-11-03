@@ -884,12 +884,31 @@ const (
 // WebDAV or API path. method is cache, bcrypt or blocked for the request
 // log; wait is the Retry-After for authThrottled. A non-nil error means the
 // answer is unknown (DB failure) and nothing was counted.
+//
+// Only accounts with role "user" may log in here. An admin account would
+// otherwise reach the internet-facing listener with its password alone,
+// without the second factor the admin UI demands. A correct admin password
+// is answered exactly like a wrong one and counted by the limiter like
+// one: if it were not counted, a guesser could tell it apart by the
+// lockout that never comes.
 func authenticateUserLimited(r *http.Request, username, password string) (res authResult, method string, wait time.Duration, err error) {
 	// The cache comes first so that devices already logged in keep working
 	// while their shared NAT address is locked out by someone else.
 	hit, epoch := authCache.lookup(username, password)
 	if hit {
-		return authOK, "cache", 0, nil
+		// The cache only holds user accounts, but the role can change
+		// after an entry was stored (directly in the database, for
+		// example). A role that is no longer "user" drops the entry and
+		// takes the full path below, which refuses it.
+		role, err := userRole(username)
+		if err != nil {
+			return authBad, "cache", 0, err
+		}
+		if role == "user" {
+			return authOK, "cache", 0, nil
+		}
+		authCache.invalidate(username)
+		_, epoch = authCache.lookup(username, password)
 	}
 	ip := clientKey(r)
 	if locked, d := limiter.ipLocked(ip); locked {
@@ -900,7 +919,7 @@ func authenticateUserLimited(r *http.Request, username, password string) (res au
 		logAuthRefused(r, authSrcUser, username, "account", d)
 		return authThrottled, "blocked", d, nil
 	}
-	ok, err := checkPassword(username, password)
+	ok, role, err := checkPasswordRole(username, password)
 	if err != nil {
 		return authBad, "bcrypt", 0, err
 	}
@@ -908,6 +927,13 @@ func authenticateUserLimited(r *http.Request, username, password string) (res au
 		// Before fail, so that a lockout this attempt starts is logged after
 		// the attempt itself.
 		logger.Warn("webdav auth failed", "username", username, "client", remoteIP(r),
+			"method", r.Method, "path", r.URL.Path)
+		stats.authFailed(r, failUser, username)
+		limiter.fail(ip, username, authSrcUser)
+		return authBad, "bcrypt", 0, nil
+	}
+	if role != "user" {
+		logger.Warn("webdav auth refused: admin account", "username", username, "client", remoteIP(r),
 			"method", r.Method, "path", r.URL.Path)
 		stats.authFailed(r, failUser, username)
 		limiter.fail(ip, username, authSrcUser)
