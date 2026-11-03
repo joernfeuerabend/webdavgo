@@ -67,8 +67,11 @@ email and share token, see [shares.md](shares.md).
 
 **Adding users.** **Admin → Users → Add user** asks for username, password,
 role and quota. The password field is prefilled with a random suggestion
-in plain text, so it can be copied and passed on. **New suggestion** replaces
-it with another one. A typed password works as well, at least 8 characters.
+in plain text, so it can be copied and passed on. The eye button next to it
+hides the password, for example while the screen is shared, and shows it
+again. A hidden field stays hidden when **New suggestion** replaces the
+password with another one. A typed password works as well, at least 8
+characters.
 A suggestion has 20 random characters in four groups of five joined by
 dashes, e.g. `Kx7mR-pW4ta-9bQhE-u3NcV`. The dashes are part of the password.
 The characters are letters and digits without `0 O o 1 l I` (easy to
@@ -77,7 +80,8 @@ confuse) and `y Y z Z` (swapped between German and US keyboard layouts),
 cryptographic random source.
 
 **Resetting a password.** *Set new password* in a user's row works the same
-way: the field holds a fresh suggestion, **New suggestion** replaces it, and
+way: the field holds a fresh suggestion, the eye button hides or shows it,
+**New suggestion** replaces it, and
 any password of at least 8 characters is accepted. A reset ends that user's
 admin sessions and drops the user's entry in the authentication cache.
 

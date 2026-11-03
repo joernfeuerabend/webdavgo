@@ -917,7 +917,21 @@ func handleLogEntries(w http.ResponseWriter, r *http.Request) {
 // handleAbout shows the copyright and license notice that AGPL-3.0 section
 // 0 ("Appropriate Legal Notices") asks an interactive user interface to show.
 func handleAbout(w http.ResponseWriter, r *http.Request) {
-	renderPage(w, r, "about", map[string]any{"Page": "about", "Version": version})
+	renderPage(w, r, "about", map[string]any{
+		"Page":       "about",
+		"Version":    version,
+		"RepoURL":    "https://github.com/" + updateRepo,
+		"ReleaseURL": releaseURL(version),
+	})
+}
+
+// releaseURL is the GitHub release page of v, or "" for a development build
+// that has no release version.
+func releaseURL(v string) string {
+	if _, ok := parseReleaseVersion(v); !ok || !strings.HasPrefix(v, "v") {
+		return ""
+	}
+	return "https://github.com/" + updateRepo + "/releases/tag/" + v
 }
 
 // certStatusData prepares the certificate status for the status and the

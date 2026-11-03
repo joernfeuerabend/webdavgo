@@ -217,7 +217,9 @@ func TestSuggestPassword(t *testing.T) {
 
 func TestPasswordSuggestionEndpoint(t *testing.T) {
 	loadTemplates()
-	field := regexp.MustCompile(`^<input type="text" name="new_password" value="[` + passwordAlphabet + `-]{23}" required minlength="8"`)
+	// "New suggestion" swaps the whole span with outerHTML: the answer is
+	// one span holding the input and the show/hide button.
+	field := regexp.MustCompile(`(?s)^<span class="password-field">\s*<input type="text" name="new_password" value="[` + passwordAlphabet + `-]{23}" required minlength="8".*<button type="button"[^>]*data-password-toggle[^>]*aria-pressed="true".*</button>\s*</span>$`)
 	r := httptest.NewRequest(http.MethodGet, "/admin/users/password-suggestion?field=new_password", nil)
 	w := httptest.NewRecorder()
 	handlePasswordSuggestion(w, r)
