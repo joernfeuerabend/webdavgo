@@ -116,7 +116,8 @@ obtains a Let's Encrypt certificate and serves WebDAV at
 **5. Add users** under **Admin → Users** and connect a WebDAV client to
 `https://<your-domain>/`. The password field holds a random suggestion
 (four groups of five characters, the dashes belong to the password), and
-**New suggestion** generates another one. An admin account cannot use WebDAV
+**New suggestion** generates another one. The eye button next to it hides
+the password while the screen is shared. An admin account cannot use WebDAV
 or the share API, not even with the correct password. If you administer the
 server and also want to sync files, create a second account with role user,
 for example `alice` for WebDAV next to `alice-admin` for the admin UI. See

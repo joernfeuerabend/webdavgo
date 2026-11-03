@@ -114,6 +114,11 @@ button[type=submit]:hover, .btn-primary:hover { opacity: .85; }
 .password-input { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; min-width: 27ch; }
 .password-row { display: flex; gap: .5rem; align-items: center; margin-top: .35rem; }
 .password-row input { margin-top: 0; flex: 1; }
+.password-field { display: flex; gap: .5rem; align-items: center; flex: 1; min-width: 0; }
+.password-field input { margin-top: 0; flex: 1; min-width: 0; }
+.password-toggle { display: inline-flex; align-items: center; padding: .3rem .5rem; line-height: 0; }
+.password-toggle[aria-pressed="true"] .icon-hidden,
+.password-toggle[aria-pressed="false"] .icon-shown { display: none; }
 
 /* ---- messages ---- */
 .error { color: var(--danger); margin-bottom: 1rem; font-size: .9rem; }

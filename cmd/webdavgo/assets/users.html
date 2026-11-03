@@ -140,12 +140,27 @@
 </body>
 </html>{{end}}
 
-{{/* A password input prefilled with a fresh suggestion. The dot is the
-     input's name. Plain text, so the admin can read it and pass it on. */}}
-{{define "password-field"}}<input type="text" name="{{.}}" value="{{suggestPassword}}" required minlength="8"
-       class="password-input" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"
-       aria-label="Password">{{end}}
+{{/* A password input prefilled with a fresh suggestion, and a button that
+     hides or shows it. The dot is the input's name. Plain text by default,
+     so the admin can read the password and pass it on. "New suggestion"
+     replaces the whole span, password.js keeps the hidden state. */}}
+{{define "password-field"}}<span class="password-field">
+  <input type="text" name="{{.}}" value="{{suggestPassword}}" required minlength="8"
+         class="password-input" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"
+         aria-label="Password">
+  <button type="button" class="btn btn-sm btn-secondary password-toggle" data-password-toggle
+          aria-label="Show password" aria-pressed="true" title="Hide password">
+    <svg class="icon-shown" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"
+         fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>
+    </svg>
+    <svg class="icon-hidden" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"
+         fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M2 12s3.5-7 10-7c2 0 3.7.6 5.1 1.5M22 12s-3.5 7-10 7c-2 0-3.7-.6-5.1-1.5"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="M3 3l18 18"/>
+    </svg>
+  </button>
+</span>{{end}}
 
 {{define "password-renew"}}<button type="button" class="btn btn-sm btn-secondary"
-        hx-get="/admin/users/password-suggestion?field={{.}}" hx-target="previous input[name='{{.}}']"
+        hx-get="/admin/users/password-suggestion?field={{.}}" hx-target="previous .password-field"
         hx-swap="outerHTML">New suggestion</button>{{end}}
