@@ -18,17 +18,32 @@ jobs:
       contents: write
     env:
       TAG: ${{ github.event.release.tag_name }}
+      PRERELEASE: ${{ github.event.release.prerelease }}
     steps:
+      # A pre-release tag carries -alpha.N, -beta.N or -rc.N, and only a
+      # release marked as pre-release on GitHub may carry one.
       - name: Check tag
         run: |
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           then
-            echo "release tag $TAG does not match vMAJOR.MINOR.PATCH" >&2
+            if [[ "$PRERELEASE" == true ]]
+            then
+              echo "release $TAG is marked as pre-release but its tag has no pre-release suffix" >&2
+              exit 1
+            fi
+          elif [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.(0|[1-9][0-9]{0,8})$ ]]
+          then
+            if [[ "$PRERELEASE" != true ]]
+            then
+              echo "release $TAG has a pre-release tag but is not marked as pre-release" >&2
+              exit 1
+            fi
+          else
+            echo "release tag $TAG matches neither vMAJOR.MINOR.PATCH nor vMAJOR.MINOR.PATCH-(alpha|beta|rc).N" >&2
             exit 1
           fi
 
-      # Full history and tags, so that git describe in the Makefile yields
-      # the tag as version.
+      # Full history and tags, as for a local build of the tag.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/tags/${{ github.event.release.tag_name }}
@@ -42,8 +57,10 @@ jobs:
           go-version: '1.26.x'
           cache: false
 
+      # VERSION is the tag itself. git describe could name another tag of
+      # the same commit, such as v1.2.3-rc.2 for v1.2.3.
       - name: Build
-        run: make dist
+        run: make dist VERSION="$TAG"
 
       # cp fails if make dist did not take the tag as version.
       - name: Package

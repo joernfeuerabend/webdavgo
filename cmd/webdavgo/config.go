@@ -111,6 +111,10 @@ type Config struct {
 	AccessLog string `toml:"access_log"`
 	ServerLog string `toml:"server_log"`
 
+	// UpdatePrereleases lets the Update page offer signed pre-releases
+	// besides final releases.
+	UpdatePrereleases bool `toml:"update_prereleases"`
+
 	// ConfigFile is where the configuration lives and the admin UI saves.
 	// ConfigRead is the file actually read: the old config.toml until
 	// migrateConfigFile has replaced it, else ConfigFile.
@@ -1240,6 +1244,7 @@ func (c Config) logAttrs() []any {
 		"max_dead_props_size", c.MaxDeadPropsSize,
 		"access_log", c.AccessLog,
 		"server_log", c.ServerLog,
+		"update_prereleases", c.UpdatePrereleases,
 		"tls_mode", c.TLSMode,
 		"require_tls", c.RequireTLS,
 		"domain", c.Domain,

@@ -534,6 +534,71 @@ pings the watchdog every half interval, but only while the `/livez` check
 passes, so systemd restarts a process that is no longer live. A skipped ping
 is logged at Warn.
 
+## Updates
+
+**Admin → Update** checks GitHub for a newer release when you click
+**Check for updates**, and never on its own. It offers the newest release
+that
+
+- is not a draft. Drafts are never offered.
+- is newer than the running version, so it never offers a downgrade.
+- has a `SHA256SUMS.minisig` asset that verifies against one of the release
+  keys built into the running binary, and a tarball for this architecture
+  whose name and checksum are in the signed `SHA256SUMS`.
+
+Newer releases that fail a check are listed under "Newer releases that are
+not offered", with the reason. **Install update** (after a confirmation)
+downloads the release and hands it to the root update helper, which checks
+the signature, the checksum and the version again on its own before it
+installs the binary and restarts the service. The Update page can install
+only on an installation prepared for updates via the web UI (`webdavgo
+install` asks, or `-auto-update=yes`). In a container, pull the new image tag
+instead.
+
+**Versions.** Release tags are `vMAJOR.MINOR.PATCH`. Pre-release tags add
+`-alpha.N`, `-beta.N` or `-rc.N` (`v0.1.6-rc.1`). Versions are ordered as in
+SemVer 2.0.0: `v0.1.6-alpha.1` < `v0.1.6-beta.1` < `v0.1.6-rc.1` <
+`v0.1.6-rc.2` < `v0.1.6-rc.10` < `v0.1.6`, and build metadata (`+...`) does
+not count. A binary built from a commit past a tag (`v0.1.5-3-gabc1234`, or
+`-dirty`, as `git describe` names it) is neither a release nor a
+pre-release, even though SemVer would read the suffix as a pre-release. It
+ranks with the tag it was built from, so newer releases are offered to it,
+and **Admin → About** links the version to its GitHub release page only for
+release and pre-release versions, not for such builds or for `dev`.
+
+**Pre-releases.** By default only final releases are offered. On a test
+server, `update_prereleases = true` (**Admin → Settings → Updates**, then
+Apply) also offers signed pre-releases. They are candidates like final
+releases, and the newest signed one wins. They must be signed with the same
+release keys and pass the same checks. While the switch is on, the Update
+page says that pre-releases are offered. An offered pre-release is labelled
+as such, and the confirmation repeats the warning.
+
+Pre-releases are test builds. They can be unstable and can damage data or
+configuration. They are not meant for production servers.
+
+With the switch off, newer pre-releases are listed as not offered, and a
+server that runs a pre-release is offered the next final release once it
+exists (`v0.1.6-rc.2` gets `v0.1.6`), never another pre-release. Turning
+the switch off after a check that offered a pre-release blocks its install
+until the next check.
+
+To move a test server to a pre-release:
+
+1. Back up the data directory and `/etc/webdavgo`. A pre-release may migrate
+   the database schema, and an older binary refuses a newer schema.
+2. **Admin → Settings → Updates**: turn on **Offer pre-releases**
+   (`update_prereleases`), then Apply.
+3. **Admin → Update**: Check for updates. The newest signed pre-release is
+   offered, labelled as pre-release. Install it.
+
+To go back to final releases, turn the switch off again and Apply. The
+server stays on the pre-release until a newer final release is published,
+which the Update page then offers. The Update page never installs an older
+version. Going back to an older release means running `sudo ./webdavgo
+install` from that release's binary and restoring the backup if the schema
+has changed.
+
 ## Emergency recovery
 
 If you have changed the listener addresses to something unreachable, edit

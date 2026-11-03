@@ -244,7 +244,9 @@ removes all three and the system user, after you type the hostname (or with
 The image `joernfeuerabend/webdavgo` on Docker Hub (linux/amd64 and
 linux/arm64) holds the release binary on a distroless base without a shell.
 It runs as UID/GID 65532. Tags are the version (`0.1.0`), the minor
-version (`0.1`) and `latest` for releases that are not prereleases.
+version (`0.1`) and `latest` for final releases. A pre-release
+(`v0.1.6-rc.1`) gets only its version tag (`0.1.6-rc.1`). It is a test
+build and not meant for production.
 
 ```sh
 docker run -d --name webdavgo \

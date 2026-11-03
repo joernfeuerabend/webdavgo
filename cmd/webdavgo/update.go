@@ -8,9 +8,10 @@ package main
 //
 // Nothing here contacts the network on its own. GitHub is queried only when
 // the admin clicks "Check for updates". A release is offered only if it is
-// neither a draft nor a pre-release, is newer than the running version, and
-// has a SHA256SUMS.minisig asset that verifies against an embedded release
-// key (minisign.go).
+// not a draft, is newer than the running version, and has a
+// SHA256SUMS.minisig asset that verifies against an embedded release key
+// (minisign.go). Pre-releases are offered only while update_prereleases is
+// on, and they pass the same checks.
 //
 // "Install update" downloads the tarball for this architecture, SHA256SUMS
 // and SHA256SUMS.minisig into updateDir and places updateRequestFile there.
@@ -105,31 +106,132 @@ ProtectHome=yes
 
 // ---- versions ----------------------------------------------------------------
 
-// semver is MAJOR.MINOR.PATCH. described marks a build past that release,
-// such as "v1.2.3-4-gabcdef" or "v1.2.3-dirty" from git describe.
+// semver is a SemVer 2.0.0 version as webdavgo uses it: MAJOR.MINOR.PATCH,
+// optionally a pre-release tag of the form alpha.N, beta.N or rc.N, and
+// optionally build metadata, which does not take part in the ordering.
+//
+// described marks a build past a tag, such as "v1.2.3-4-gabcdef",
+// "v1.2.3-dirty" or "v1.2.4-rc.1-2-gabcdef" from git describe. Both git
+// describe suffixes are valid SemVer pre-release identifiers as well, so
+// only the defined tag pattern makes a pre-release: whatever else follows
+// the version or the pre-release tag marks a described build. A described
+// build is neither a release nor a pre-release.
 type semver struct {
 	major, minor, patch int
-	described           bool
+	// pre is the pre-release tag without the leading "-", such as "rc.1",
+	// or "" for a final version.
+	pre string
+	// build is the build metadata without the leading "+", or "".
+	build     string
+	described bool
 }
 
-func (v semver) String() string { return fmt.Sprintf("%d.%d.%d", v.major, v.minor, v.patch) }
-
-// newerThan compares the release numbers only: a build past v1.2.3 is not
-// older than v1.2.3, and v1.2.4 is newer than both.
-func (v semver) newerThan(o semver) bool {
-	if v.major != o.major {
-		return v.major > o.major
+func (v semver) String() string {
+	s := fmt.Sprintf("%d.%d.%d", v.major, v.minor, v.patch)
+	if v.pre != "" {
+		s += "-" + v.pre
 	}
-	if v.minor != o.minor {
-		return v.minor > o.minor
+	if v.build != "" {
+		s += "+" + v.build
 	}
-	return v.patch > o.patch
+	return s
 }
 
-// parseVersion accepts "v1.2.3" or "1.2.3", optionally followed by a git
-// describe suffix ("-..."). "dev" and other builds are not versions.
+// prerelease reports whether v carries a pre-release tag.
+func (v semver) prerelease() bool { return v.pre != "" }
+
+// compare orders v and o by SemVer precedence: -1 if v is older, 1 if it
+// is newer, 0 if both have the same precedence. Build metadata and the
+// described mark do not count: a build past v1.2.3 is not older than
+// v1.2.3, and v1.2.4 is newer than both.
+func (v semver) compare(o semver) int {
+	for _, d := range [3]int{v.major - o.major, v.minor - o.minor, v.patch - o.patch} {
+		switch {
+		case d < 0:
+			return -1
+		case d > 0:
+			return 1
+		}
+	}
+	return comparePrerelease(v.pre, o.pre)
+}
+
+// newerThan reports whether v has a higher precedence than o.
+func (v semver) newerThan(o semver) bool { return v.compare(o) > 0 }
+
+// comparePrerelease orders two pre-release tags by SemVer 2.0.0 rule 11. A
+// final version ("") ranks above every pre-release of it. Identifiers are
+// compared from left to right: numeric ones numerically, others in ASCII
+// order, and a numeric identifier ranks below a non-numeric one. If all
+// shared identifiers are equal, the tag with more identifiers is newer.
+func comparePrerelease(a, b string) int {
+	switch {
+	case a == b:
+		return 0
+	case a == "":
+		return 1
+	case b == "":
+		return -1
+	}
+	as, bs := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(as) && i < len(bs); i++ {
+		x, y := as[i], bs[i]
+		xn, yn := isNumericIdent(x), isNumericIdent(y)
+		var c int
+		switch {
+		case xn && yn:
+			// No leading zeros, so the longer number is the larger one.
+			c = cmpInt(len(x), len(y))
+			if c == 0 {
+				c = strings.Compare(x, y)
+			}
+		case xn:
+			c = -1
+		case yn:
+			c = 1
+		default:
+			c = strings.Compare(x, y)
+		}
+		if c != 0 {
+			return c
+		}
+	}
+	return cmpInt(len(as), len(bs))
+}
+
+func cmpInt(a, b int) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	}
+	return 0
+}
+
+func isNumericIdent(s string) bool {
+	return s != "" && strings.TrimLeft(s, "0123456789") == ""
+}
+
+// prereleaseTagRE is the pre-release tag a webdavgo release may carry.
+// Anything else after "-" is a git describe suffix. The number has no
+// leading zeros, as SemVer requires.
+var prereleaseTagRE = regexp.MustCompile(`^(alpha|beta|rc)\.(0|[1-9][0-9]{0,8})$`)
+
+// buildMetadataRE is SemVer build metadata: dot-separated identifiers of
+// ASCII letters, digits and hyphens.
+var buildMetadataRE = regexp.MustCompile(`^[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*$`)
+
+// parseVersion accepts "v1.2.3" or "1.2.3", optionally followed by a
+// pre-release tag ("-rc.1"), a git describe suffix ("-4-gabcdef",
+// "-dirty") and build metadata ("+..."). "dev" and other builds are not
+// versions.
 func parseVersion(s string) (semver, bool) {
-	core, rest, hasRest := strings.Cut(strings.TrimPrefix(s, "v"), "-")
+	s, build, hasBuild := strings.Cut(strings.TrimPrefix(s, "v"), "+")
+	if hasBuild && !buildMetadataRE.MatchString(build) {
+		return semver{}, false
+	}
+	core, rest, hasRest := strings.Cut(s, "-")
 	parts := strings.Split(core, ".")
 	if len(parts) != 3 || (hasRest && rest == "") {
 		return semver{}, false
@@ -141,10 +243,23 @@ func parseVersion(s string) (semver, bool) {
 		}
 		n[i], _ = strconv.Atoi(p)
 	}
-	return semver{major: n[0], minor: n[1], patch: n[2], described: hasRest}, true
+	v := semver{major: n[0], minor: n[1], patch: n[2], build: build}
+	if hasRest {
+		tag, suffix, hasSuffix := strings.Cut(rest, "-")
+		switch {
+		case !prereleaseTagRE.MatchString(tag):
+			v.described = true
+		case hasSuffix && suffix == "":
+			return semver{}, false
+		default:
+			v.pre, v.described = tag, hasSuffix
+		}
+	}
+	return v, true
 }
 
-// parseReleaseVersion accepts exact release versions only.
+// parseReleaseVersion accepts the versions of releases and pre-releases
+// only, never a described build.
 func parseReleaseVersion(s string) (semver, bool) {
 	v, ok := parseVersion(s)
 	return v, ok && !v.described
@@ -169,7 +284,7 @@ type releaseTarball struct {
 	version semver
 }
 
-var tarballNameRE = regexp.MustCompile(`^webdavgo_([0-9]+\.[0-9]+\.[0-9]+)_linux_([a-z0-9]+)\.tar\.gz$`)
+var tarballNameRE = regexp.MustCompile(`^webdavgo_([0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?)_linux_([a-z0-9]+)\.tar\.gz$`)
 
 // tarballFromSums finds the tarball for runtime.GOARCH in a SHA256SUMS
 // file as sha256sum writes it ("<hex>  <name>", or "<hex> *<name>").
@@ -266,10 +381,13 @@ func (r githubRelease) asset(name string) (githubAsset, bool) {
 type availableRelease struct {
 	Tag      string
 	NotesURL string
-	tarball  githubAsset
-	entry    releaseTarball
-	sumsData []byte
-	sigData  []byte
+	// Prerelease marks a pre-release: the tag carries a pre-release
+	// version or GitHub marks the release as one.
+	Prerelease bool
+	tarball    githubAsset
+	entry      releaseTarball
+	sumsData   []byte
+	sigData    []byte
 }
 
 // updateCheck is the result of the last check.
@@ -277,6 +395,8 @@ type updateCheck struct {
 	Time   time.Time
 	Err    string
 	Latest *availableRelease
+	// Prereleases is update_prereleases at the time of the check.
+	Prereleases bool
 	// Skipped explains newer releases that were not offered.
 	Skipped []string
 }
@@ -325,9 +445,10 @@ func updateGet(ctx context.Context, url, accept string, limit int64) ([]byte, er
 }
 
 // checkForUpdate asks GitHub for the newest release this binary can update
-// to.
-func checkForUpdate(ctx context.Context) *updateCheck {
-	res := &updateCheck{Time: time.Now()}
+// to. With prereleases set, pre-releases are candidates like final
+// releases.
+func checkForUpdate(ctx context.Context, prereleases bool) *updateCheck {
+	res := &updateCheck{Time: time.Now(), Prereleases: prereleases}
 	installed, err := installedVersion()
 	if err != nil {
 		res.Err = err.Error()
@@ -348,45 +469,78 @@ func checkForUpdate(ctx context.Context) *updateCheck {
 		res.Err = "cannot read the GitHub answer: " + err.Error()
 		return res
 	}
-	type candidate struct {
-		rel githubRelease
-		v   semver
-	}
-	var newer []candidate
-	for _, r := range releases {
-		if r.Draft || r.Prerelease {
-			continue
-		}
-		v, ok := parseReleaseVersion(r.TagName)
-		if !ok || !strings.HasPrefix(r.TagName, "v") || !v.newerThan(installed) {
-			continue
-		}
-		newer = append(newer, candidate{r, v})
-	}
-	slices.SortFunc(newer, func(a, b candidate) int {
-		switch {
-		case a.v.newerThan(b.v):
-			return -1
-		case b.v.newerThan(a.v):
-			return 1
-		}
-		return 0
-	})
+	res.Latest, res.Skipped = selectUpdate(ctx, releases, installed, prereleases, verifyRelease)
+	return res
+}
+
+// selectUpdate returns the newest candidate of releases that verify
+// accepts, and why newer releases are not offered. Pre-releases held back
+// by prereleases=false are listed only if they are newer than what is
+// offered.
+func selectUpdate(ctx context.Context, releases []githubRelease, installed semver, prereleases bool,
+	verify func(context.Context, githubRelease, semver) (*availableRelease, error)) (*availableRelease, []string) {
+	var latest *availableRelease
+	var latestV semver
+	var skipped []string
+	newer, held := updateCandidates(releases, installed, prereleases)
 	for i, c := range newer {
 		if i == maxUpdateCandidates {
-			res.Skipped = append(res.Skipped, fmt.Sprintf("%d older releases were not checked", len(newer)-i))
+			skipped = append(skipped, fmt.Sprintf("%d older releases were not checked", len(newer)-i))
 			break
 		}
-		a, err := verifyRelease(ctx, c.rel, c.v)
+		a, err := verify(ctx, c.rel, c.v)
 		if err != nil {
-			res.Skipped = append(res.Skipped, c.rel.TagName+": "+err.Error())
+			skipped = append(skipped, c.rel.TagName+": "+err.Error())
 			logger.Info("update check: release not offered", "tag", c.rel.TagName, "reason", err)
 			continue
 		}
-		res.Latest = a
+		latest, latestV = a, c.v
 		break
 	}
-	return res
+	for _, c := range held {
+		if latest == nil || c.v.newerThan(latestV) {
+			skipped = append(skipped, c.rel.TagName+": pre-release, not offered while update_prereleases is off")
+		}
+	}
+	return latest, skipped
+}
+
+// updateCandidate is a release newer than the installed version.
+type updateCandidate struct {
+	rel githubRelease
+	v   semver
+}
+
+// isPrerelease reports whether r is a pre-release by its tag or by its
+// GitHub flag.
+func (c updateCandidate) isPrerelease() bool { return c.v.prerelease() || c.rel.Prerelease }
+
+// updateCandidates returns the releases newer than installed, newest
+// first. Drafts and tags that are not release versions are left out.
+// Without prereleases, newer pre-releases are returned as held instead,
+// newest first, so that the page can name them.
+func updateCandidates(releases []githubRelease, installed semver, prereleases bool) (newer, held []updateCandidate) {
+	for _, r := range releases {
+		if r.Draft {
+			continue
+		}
+		v, ok := parseReleaseVersion(r.TagName)
+		// Only the canonical tag of a version counts. A release tag never
+		// carries build metadata, which no tarball name could match.
+		if !ok || v.build != "" || r.TagName != "v"+v.String() || !v.newerThan(installed) {
+			continue
+		}
+		c := updateCandidate{r, v}
+		if c.isPrerelease() && !prereleases {
+			held = append(held, c)
+			continue
+		}
+		newer = append(newer, c)
+	}
+	newestFirst := func(a, b updateCandidate) int { return b.v.compare(a.v) }
+	slices.SortStableFunc(newer, newestFirst)
+	slices.SortStableFunc(held, newestFirst)
+	return newer, held
 }
 
 // verifyRelease downloads and verifies the signed checksums of r.
@@ -419,7 +573,7 @@ func verifyRelease(ctx context.Context, r githubRelease, v semver) (*availableRe
 		return nil, errors.New("no asset " + entry.name)
 	}
 	return &availableRelease{
-		Tag: r.TagName, NotesURL: r.HTMLURL,
+		Tag: r.TagName, NotesURL: r.HTMLURL, Prerelease: v.prerelease() || r.Prerelease,
 		tarball: tarball, entry: entry, sumsData: sumsData, sigData: sigData,
 	}, nil
 }
@@ -523,15 +677,19 @@ func renderUpdate(w http.ResponseWriter, r *http.Request, status int, errMsg str
 	st := readUpdateStatus()
 	pending := updatePending(updateRequestPending(), requested, st)
 	blocked := installBlocked()
+	prereleases := conf().UpdatePrereleases
+	stale := prereleaseWithdrawn(check, prereleases)
 	data := map[string]any{
-		"Page":       "update",
-		"Version":    version,
-		"Error":      errMsg,
-		"Check":      check,
-		"Pending":    pending,
-		"Blocked":    blocked,
-		"Status":     st,
-		"CanInstall": check != nil && check.Latest != nil && blocked == "" && !pending,
+		"Page":        "update",
+		"Version":     version,
+		"Error":       errMsg,
+		"Check":       check,
+		"Pending":     pending,
+		"Blocked":     blocked,
+		"Status":      st,
+		"Prereleases": prereleases,
+		"Withdrawn":   stale,
+		"CanInstall":  check != nil && check.Latest != nil && blocked == "" && !pending && !stale,
 	}
 	if check != nil {
 		data["CheckedAt"] = formatStatusTime(check.Time)
@@ -546,6 +704,12 @@ func renderUpdate(w http.ResponseWriter, r *http.Request, status int, errMsg str
 	renderPage(w, r, "update", data)
 }
 
+// prereleaseWithdrawn reports whether check offers a pre-release although
+// update_prereleases has been turned off since.
+func prereleaseWithdrawn(check *updateCheck, prereleases bool) bool {
+	return check != nil && check.Latest != nil && check.Latest.Prerelease && !prereleases
+}
+
 func handleUpdateGET(w http.ResponseWriter, r *http.Request) {
 	renderUpdate(w, r, http.StatusOK, "")
 }
@@ -553,7 +717,7 @@ func handleUpdateGET(w http.ResponseWriter, r *http.Request) {
 func handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
-	res := checkForUpdate(ctx)
+	res := checkForUpdate(ctx, conf().UpdatePrereleases)
 	updateState.Lock()
 	updateState.check = res
 	updateState.Unlock()
@@ -561,7 +725,8 @@ func handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	case res.Err != "":
 		logger.Warn("update check failed", "err", res.Err, "by", currentUser(r))
 	case res.Latest != nil:
-		logger.Info("update check: update available", "installed", version, "available", res.Latest.Tag, "by", currentUser(r))
+		logger.Info("update check: update available", "installed", version, "available", res.Latest.Tag,
+			"prerelease", res.Latest.Prerelease, "by", currentUser(r))
 	default:
 		logger.Info("update check: no update available", "installed", version, "by", currentUser(r))
 	}
@@ -604,6 +769,10 @@ func handleUpdateInstall(w http.ResponseWriter, r *http.Request) {
 		renderUpdate(w, r, http.StatusConflict, "No update is available. Check for updates first.")
 		return
 	}
+	if prereleaseWithdrawn(check, conf().UpdatePrereleases) {
+		renderUpdate(w, r, http.StatusConflict, "Pre-releases are no longer offered because update_prereleases has been turned off. Check for updates again.")
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
 	if err := requestUpdate(ctx, check.Latest); err != nil {
@@ -615,6 +784,6 @@ func handleUpdateInstall(w http.ResponseWriter, r *http.Request) {
 	updateState.requested = true
 	updateState.Unlock()
 	logger.Info("update requested, the update helper installs it and restarts the service",
-		"installed", version, "tag", check.Latest.Tag, "by", currentUser(r))
+		"installed", version, "tag", check.Latest.Tag, "prerelease", check.Latest.Prerelease, "by", currentUser(r))
 	http.Redirect(w, r, "/admin/update", http.StatusSeeOther)
 }

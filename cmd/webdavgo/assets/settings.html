@@ -71,6 +71,7 @@
   {{else if .Options}}<select id="in-{{.Key}}" name="{{.Key}}">{{range .Options}}<option value="{{.}}" {{if eq . $.Value}}selected{{end}}>{{.}}</option>{{end}}</select>
   {{else}}<input type="text" id="in-{{.Key}}" name="{{.Key}}" value="{{.Value}}" spellcheck="false" autocapitalize="off"{{if .ACME}} data-acme{{end}}{{if .Disabled}} disabled{{end}}>{{end}}
   {{end}}
+  {{if .Warning}}<p class="banner banner-warn field-warning" role="note">{{.Warning}}</p>{{end}}
   {{range .ReadOnly}}<small class="field-readonly">Read-only: {{.}}.</small>{{end}}
   {{if .Error}}<small class="field-error">{{.Error}}</small>{{end}}
   {{if .Restart}}<small class="field-restart">Takes effect after service restart.</small>{{end}}

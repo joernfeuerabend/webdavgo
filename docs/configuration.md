@@ -62,6 +62,7 @@ as one `config` line.
 | `health_enabled` | `false` | run the health listener (see [Health checks](administration.md#health-checks)) |
 | `health_bind` | `"127.0.0.1"` | host name or IP address the health listener binds to, without port. Empty = all interfaces |
 | `health_port` | `8082` | port of the health listener (1-65535). Must differ from `webdav_port` and `webgui_port` |
+| `update_prereleases` | `false` | also offer signed pre-releases (such as `v1.2.3-rc.1`) on **Admin → Update**. Test servers only (see [Updates](administration.md#updates)) |
 | `tls_mode` | `"off"` | `off` (plain HTTP) or `acme` (TLS with an ACME certificate, see [Internet deployment](installation.md#internet-deployment)) |
 | `require_tls` | `false` | with `tls_mode = "off"`, do not start the WebDAV listener on a non-loopback address (see [`require_tls`](installation.md#deployment-with-webdavgo-install)) |
 | `domain` | none | public DNS name of the server, required with `tls_mode = "acme"` |
@@ -91,9 +92,9 @@ durations in whole seconds, sizes in KB and rates in KB/s (decimal, 1 KB =
 
 ## Settings page
 
-**Admin → Settings** shows every key above in one of eight sections (Network &
+**Admin → Settings** shows every key above in one of nine sections (Network &
 listeners, TLS & domain, Connections & limits, Brute-force protection,
-WebDAV, Users, Logging, Health), each with its saved value, a short description and its
+WebDAV, Users, Logging, Health, Updates), each with its saved value, a short description and its
 default, plus the config file path. Every field is editable except where
 there is a technical reason, which is shown next to the field: `data_dir`
 (the database lives in it), the config file path (set by the service unit or
@@ -106,8 +107,8 @@ there is a technical reason, which is shown next to the field: `data_dir`
 - **Apply** saves the form first, then makes the section's saved values
   effective in the running server without a restart and without ending the
   admin session: limits, rates, timeouts read per request, brute-force and
-  unauthenticated-rate parameters, `auth_cache_ttl`, `log_level` and
-  `log_buffer_entries` at once. A changed port or listen address of a
+  unauthenticated-rate parameters, `auth_cache_ttl`, `log_level`,
+  `log_buffer_entries` and `update_prereleases` at once. A changed port or listen address of a
   listener moves it: the new one starts, the old one finishes its running
   requests (up to `shutdown_timeout`) and closes. After moving the admin
   listener the page links to the new address, which is then the only one.

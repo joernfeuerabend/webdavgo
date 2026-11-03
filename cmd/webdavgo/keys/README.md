@@ -6,7 +6,7 @@ This directory holds the minisign public keys that the webdavgo binary
 embeds (see `minisign.go`) to verify updates offered on the admin UI's
 Update page:
 
-- `main.pub` signs every release.
+- `main.pub` signs every release, pre-releases included.
 - `reserve.pub` is accepted as well and takes over if the main key is lost
   or compromised.
 

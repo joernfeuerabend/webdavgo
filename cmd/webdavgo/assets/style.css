@@ -150,6 +150,7 @@ tr:last-child td { border-bottom: none; }
 }
 .role-admin { background: rgba(74,158,255,.15); color: var(--accent); }
 .role-user  { background: rgba(255,255,255,.07); color: var(--muted); }
+.prerelease-badge { background: var(--warn-bg); border: 1px solid var(--warn-border); color: #f0c040; }
 
 /* ---- per-row action column ---- */
 .user-search { margin-bottom: 1rem; }
@@ -230,6 +231,7 @@ pre.cmd {
 .field small.field-error { color: var(--danger); }
 .field small.field-restart, .field small.field-pending { color: #e0a030; }
 .field small.field-note { color: var(--text); }
+.field .field-warning { margin: .5rem 0 0; }
 .form-actions { display: flex; gap: .5rem; margin-top: .5rem; }
 .reset-form { margin-top: .75rem; }
 .pending-list { margin: .5rem 0 0 1.25rem; }
