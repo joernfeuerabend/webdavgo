@@ -109,6 +109,11 @@ button[type=submit]:hover, .btn-primary:hover { opacity: .85; }
 .btn-danger { background: var(--danger); color: #fff; }
 .btn-danger:hover { opacity: .85; }
 .btn-sm { padding: .3rem .7rem; font-size: .82rem; }
+.btn-secondary { background: var(--bg); border: 1px solid var(--border); color: var(--text); }
+.btn-secondary:hover { border-color: var(--accent); }
+.password-input { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; min-width: 27ch; }
+.password-row { display: flex; gap: .5rem; align-items: center; margin-top: .35rem; }
+.password-row input { margin-top: 0; flex: 1; }
 
 /* ---- messages ---- */
 .error { color: var(--danger); margin-bottom: 1rem; font-size: .9rem; }

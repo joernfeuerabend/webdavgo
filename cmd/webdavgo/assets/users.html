@@ -49,7 +49,8 @@
                 <div>
                   <form method="post" action="/admin/users/{{.Username}}/reset{{$.Return}}"{{if eq .Username $.Username}} hx-boost="false"{{end}}>
                     {{template "csrf" $}}
-                    <input type="password" name="new_password" placeholder="New password" required minlength="8">
+                    {{template "password-field" "new_password"}}
+                    {{template "password-renew" "new_password"}}
                     <button type="submit" class="btn-sm">Save</button>
                   </form>
                 </div>
@@ -113,14 +114,18 @@
                  title="3–32 chars: lowercase letters, digits, - or _">
         </label>
         <label>Password
-          <input type="password" name="password" required minlength="8">
+          <span class="password-row">
+            {{template "password-field" "password"}}
+            {{template "password-renew" "password"}}
+          </span>
+          <small>A random suggestion, shown in plain text so you can pass it on. You can type your own instead.</small>
         </label>
         <label>Role
           <select name="role">
             <option value="user">user</option>
             <option value="admin">admin</option>
           </select>
-          <small>Admins must set up TOTP at their first login.</small>
+          <small>Admins must set up TOTP at their first login. Admin accounts sign in to this admin UI only: they cannot use WebDAV or the share API, not even with the correct password.</small>
         </label>
         <label>Quota (GB)
           <input type="text" name="quota_gb" value="{{.DefaultQuotaGB}}" required inputmode="decimal"
@@ -134,3 +139,13 @@
 </div>
 </body>
 </html>{{end}}
+
+{{/* A password input prefilled with a fresh suggestion. The dot is the
+     input's name. Plain text, so the admin can read it and pass it on. */}}
+{{define "password-field"}}<input type="text" name="{{.}}" value="{{suggestPassword}}" required minlength="8"
+       class="password-input" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"
+       aria-label="Password">{{end}}
+
+{{define "password-renew"}}<button type="button" class="btn btn-sm btn-secondary"
+        hx-get="/admin/users/password-suggestion?field={{.}}" hx-target="previous input[name='{{.}}']"
+        hx-swap="outerHTML">New suggestion</button>{{end}}

@@ -309,14 +309,16 @@ done
 C108_DB=$(sqlite3 "$TEST_DB" "SELECT COUNT(*) FROM recovery_codes WHERE username='admin' AND used_at IS NULL;" 2>/dev/null || echo 0)
 C108_PLAIN=$(sqlite3 "$TEST_DB" "SELECT COUNT(*) FROM recovery_codes WHERE code_hash LIKE '%${RECOVERY_CODES[0]:-none}%';" 2>/dev/null || echo 1)
 
-# Create alice.
+# Create alice, and carol for the WebDAV requests that need an account
+# beyond alice: the admin account cannot use WebDAV.
 agui -X POST "$WEBGUI_URL/admin/users" -d "username=alice&password=alicepass1&role=user" >/dev/null
+agui -X POST "$WEBGUI_URL/admin/users" -d "username=carol&password=carolpass123&role=user" >/dev/null
 
-# PUT some initial files for admin.
-curl -s -X PUT -u admin:adminpass123 --data 'hello' "$WEBDAV_URL/hello.txt" >/dev/null
-curl -s -X PUT -u admin:adminpass123 --data 'secret content' "$WEBDAV_URL/secret.txt" >/dev/null
-curl -s -X PUT -u admin:adminpass123 --data 'auth module log' "$WEBDAV_URL/auth_log.txt" >/dev/null
-curl -s -X PUT -u admin:adminpass123 --data 'log_2026_01.txt content' "$WEBDAV_URL/log_2026_01.txt" >/dev/null
+# PUT some initial files for carol.
+curl -s -X PUT -u carol:carolpass123 --data 'hello' "$WEBDAV_URL/hello.txt" >/dev/null
+curl -s -X PUT -u carol:carolpass123 --data 'secret content' "$WEBDAV_URL/secret.txt" >/dev/null
+curl -s -X PUT -u carol:carolpass123 --data 'auth module log' "$WEBDAV_URL/auth_log.txt" >/dev/null
+curl -s -X PUT -u carol:carolpass123 --data 'log_2026_01.txt content' "$WEBDAV_URL/log_2026_01.txt" >/dev/null
 
 # ---- C104: the admin port speaks TLS (≥ 1.2) only -----------------------------
 # Go answers plaintext on a TLS port with a bare 400; no admin page is served.
@@ -349,15 +351,15 @@ fi
 # ---- C108: setup completes only with TOTP; recovery codes shown once ---------
 if [[ "$C108_DAV_PENDING" == "503" && "$C108_SETUP_AGAIN" == "303 $WEBGUI_URL/admin/enrol" \
       && "$C108_USERS_PENDING" == "303 $WEBGUI_URL/admin/enrol" && "$(status_line "$ENROL_HDRS")" == "200" \
-      && "${#RECOVERY_CODES[@]}" == "10" && "$C108_DAV_DONE" == "207" && "$C108_AGAIN" == "0" \
+      && "${#RECOVERY_CODES[@]}" == "10" && "$C108_DAV_DONE" == "401" && "$C108_AGAIN" == "0" \
       && "$C108_DB" == "10" && "$C108_PLAIN" == "0" ]]; then
-    check "C108: after the admin account WebDAV stays 503 and setup leads to TOTP enrolment; confirming shows 10 recovery codes once (stored hashed), then WebDAV works" pass
+    check "C108: after the admin account WebDAV stays 503 and setup leads to TOTP enrolment; confirming shows 10 recovery codes once (stored hashed), then WebDAV runs and refuses the admin account with 401" pass
 else
     check "C108: setup with TOTP (dav_pending=$C108_DAV_PENDING setup_again=[$C108_SETUP_AGAIN] users=[$C108_USERS_PENDING] enrol=$(status_line "$ENROL_HDRS") codes=${#RECOVERY_CODES[@]} dav_done=$C108_DAV_DONE shown_again=$C108_AGAIN db=$C108_DB plain=$C108_PLAIN)" fail
 fi
 
 # ---- Criterion 1: PROPFIND returns creationdate in ISO 8601 ----------------
-PF1=$(curl -s -X PROPFIND -u admin:adminpass123 -H "Depth: 0" "$WEBDAV_URL/hello.txt")
+PF1=$(curl -s -X PROPFIND -u carol:carolpass123 -H "Depth: 0" "$WEBDAV_URL/hello.txt")
 if echo "$PF1" | grep -qiE 'creationdate|[0-9]{4}-[0-9]{2}-[0-9]{2}T'; then
     check "C1: PROPFIND returns creationdate (ISO 8601)" pass
 else
@@ -365,7 +367,7 @@ else
 fi
 
 # ---- Criterion 2: SEARCH select only getetag --------------------------------
-SEARCH2=$(curl -s -X SEARCH -u admin:adminpass123 -H 'Content-Type: application/xml' \
+SEARCH2=$(curl -s -X SEARCH -u carol:carolpass123 -H 'Content-Type: application/xml' \
     --data '<?xml version="1.0"?>
 <d:searchrequest xmlns:d="DAV:">
   <d:basicsearch>
@@ -380,7 +382,7 @@ else
 fi
 
 # ---- Criterion 3: unknown property returns 404 propstat --------------------
-SEARCH3=$(curl -s -X SEARCH -u admin:adminpass123 -H 'Content-Type: application/xml' \
+SEARCH3=$(curl -s -X SEARCH -u carol:carolpass123 -H 'Content-Type: application/xml' \
     --data '<?xml version="1.0"?>
 <d:searchrequest xmlns:d="DAV:">
   <d:basicsearch>
@@ -398,9 +400,9 @@ fi
 sleep 1
 T0=$(date -uR)
 sleep 2
-curl -s -X PUT -u admin:adminpass123 --data 'new content' "$WEBDAV_URL/new_small.txt" >/dev/null
+curl -s -X PUT -u carol:carolpass123 --data 'new content' "$WEBDAV_URL/new_small.txt" >/dev/null
 
-SEARCH4=$(curl -s -X SEARCH -u admin:adminpass123 -H 'Content-Type: application/xml' \
+SEARCH4=$(curl -s -X SEARCH -u carol:carolpass123 -H 'Content-Type: application/xml' \
     --data "<?xml version='1.0'?>
 <d:searchrequest xmlns:d='DAV:'>
   <d:basicsearch>
@@ -419,7 +421,7 @@ else
 fi
 
 # ---- Criterion 5: SEARCH with <or> -----------------------------------------
-SEARCH5=$(curl -s -X SEARCH -u admin:adminpass123 -H 'Content-Type: application/xml' \
+SEARCH5=$(curl -s -X SEARCH -u carol:carolpass123 -H 'Content-Type: application/xml' \
     --data "<?xml version='1.0'?>
 <d:searchrequest xmlns:d='DAV:'>
   <d:basicsearch>
@@ -441,7 +443,7 @@ else
 fi
 
 # ---- Criterion 6: SEARCH with <not><eq> ------------------------------------
-SEARCH6=$(curl -s -X SEARCH -u admin:adminpass123 -H 'Content-Type: application/xml' \
+SEARCH6=$(curl -s -X SEARCH -u carol:carolpass123 -H 'Content-Type: application/xml' \
     --data '<?xml version="1.0"?>
 <d:searchrequest xmlns:d="DAV:">
   <d:basicsearch>
@@ -461,7 +463,7 @@ else
 fi
 
 # ---- Criterion 7: SEARCH with <like> ----------------------------------------
-SEARCH7=$(curl -s -X SEARCH -u admin:adminpass123 -H 'Content-Type: application/xml' \
+SEARCH7=$(curl -s -X SEARCH -u carol:carolpass123 -H 'Content-Type: application/xml' \
     --data '<?xml version="1.0"?>
 <d:searchrequest xmlns:d="DAV:">
   <d:basicsearch>
@@ -481,7 +483,7 @@ else
 fi
 
 # ---- Criterion 8: SEARCH with <contains> ------------------------------------
-SEARCH8=$(curl -s -X SEARCH -u admin:adminpass123 -H 'Content-Type: application/xml' \
+SEARCH8=$(curl -s -X SEARCH -u carol:carolpass123 -H 'Content-Type: application/xml' \
     --data '<?xml version="1.0"?>
 <d:searchrequest xmlns:d="DAV:">
   <d:basicsearch>
@@ -502,7 +504,7 @@ fi
 
 # ---- Criterion 9: SEARCH with empty <where/> returns everything -------------
 SEARCH9_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X SEARCH \
-    -u admin:adminpass123 -H 'Content-Type: application/xml' \
+    -u carol:carolpass123 -H 'Content-Type: application/xml' \
     --data '<?xml version="1.0"?>
 <d:searchrequest xmlns:d="DAV:">
   <d:basicsearch>
@@ -511,7 +513,7 @@ SEARCH9_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X SEARCH \
     <d:where/>
   </d:basicsearch>
 </d:searchrequest>' "$WEBDAV_URL/")
-SEARCH9=$(curl -s -X SEARCH -u admin:adminpass123 -H 'Content-Type: application/xml' \
+SEARCH9=$(curl -s -X SEARCH -u carol:carolpass123 -H 'Content-Type: application/xml' \
     --data '<?xml version="1.0"?>
 <d:searchrequest xmlns:d="DAV:">
   <d:basicsearch>
@@ -529,7 +531,7 @@ fi
 
 # ---- Criterion 10: unknown where-element returns 400 -----------------------
 S10=$(curl -s -o /dev/null -w "%{http_code}" -X SEARCH \
-    -u admin:adminpass123 -H 'Content-Type: application/xml' \
+    -u carol:carolpass123 -H 'Content-Type: application/xml' \
     --data '<?xml version="1.0"?>
 <d:searchrequest xmlns:d="DAV:">
   <d:basicsearch>
@@ -543,7 +545,7 @@ else check "C10: Unknown where-element → 400 (got $S10)" fail; fi
 
 # ---- Criterion 11: ordered comparison on string property → 400 -------------
 S11=$(curl -s -o /dev/null -w "%{http_code}" -X SEARCH \
-    -u admin:adminpass123 -H 'Content-Type: application/xml' \
+    -u carol:carolpass123 -H 'Content-Type: application/xml' \
     --data '<?xml version="1.0"?>
 <d:searchrequest xmlns:d="DAV:">
   <d:basicsearch>
@@ -604,7 +606,7 @@ fi
 
 # ---- Criterion 13: REPORT falls through to webdav handler (not 207) ---------
 S13=$(curl -s -o /dev/null -w "%{http_code}" -X REPORT \
-    -u admin:adminpass123 "$WEBDAV_URL/")
+    -u carol:carolpass123 "$WEBDAV_URL/")
 if [[ "$S13" != "207" ]]; then
     check "C13: REPORT not handled by us (returns $S13)" pass
 else
@@ -643,16 +645,16 @@ if [[ "$S17" == "404" ]]; then check "C17: GET /admin/users/admin/tokens → 404
 else check "C17: tokens admin route (got $S17)" fail; fi
 
 # ---- Criterion 18: password-based auth still works --------------------------
-S18=$(curl -s -o /dev/null -w "%{http_code}" -u admin:adminpass123 "$WEBDAV_URL/hello.txt")
+S18=$(curl -s -o /dev/null -w "%{http_code}" -u carol:carolpass123 "$WEBDAV_URL/hello.txt")
 if [[ "$S18" =~ ^(200|207)$ ]]; then check "C18: Password-based auth still works" pass
 else check "C18: Password-based auth (got $S18)" fail; fi
 
 # ---- Criterion 19: regression check (MVP + admin-ui + SEARCH + PROPFIND) ----
 PF19=$(curl -s -o /dev/null -w "%{http_code}" -X PROPFIND \
-    -u admin:adminpass123 -H "Depth: 1" "$WEBDAV_URL/")
+    -u carol:carolpass123 -H "Depth: 1" "$WEBDAV_URL/")
 NO_AUTH19=$(curl -s -o /dev/null -w "%{http_code}" "$WEBDAV_URL/hello.txt")
 SEARCH19=$(curl -s -o /dev/null -w "%{http_code}" -X SEARCH \
-    -u admin:adminpass123 -H 'Content-Type: application/xml' \
+    -u carol:carolpass123 -H 'Content-Type: application/xml' \
     --data '<?xml version="1.0"?><d:searchrequest xmlns:d="DAV:"><d:basicsearch>
       <d:select><d:prop><d:getetag/></d:prop></d:select>
       <d:from><d:scope><d:href>/</d:href><d:depth>infinity</d:depth></d:scope></d:from>
@@ -786,14 +788,14 @@ else
     check "C30: get share (status=$GET_STATUS no_token=$NO_TOKEN32)" fail
 fi
 
-# ---- C31: GET share as admin (not owner) → 404 ------------------------------
-S33=$(curl -s -o /dev/null -w "%{http_code}" -u admin:adminpass123 "$WEBDAV_URL/api/v1/shares/$SHARE_ID")
-if [[ "$S33" == "404" ]]; then check "C31: GET share as non-owner admin → 404" pass
-else check "C31: get share as admin (got $S33)" fail; fi
+# ---- C31: GET share as another user (not owner) → 404 -----------------------
+S33=$(curl -s -o /dev/null -w "%{http_code}" -u carol:carolpass123 "$WEBDAV_URL/api/v1/shares/$SHARE_ID")
+if [[ "$S33" == "404" ]]; then check "C31: GET share as non-owner user → 404" pass
+else check "C31: get share as non-owner user (got $S33)" fail; fi
 
-# ---- C32: DELETE share as admin (not owner) → 404, share still exists -------
+# ---- C32: DELETE share as another user (not owner) → 404, share still exists
 S34=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
-    -u admin:adminpass123 "$WEBDAV_URL/api/v1/shares/$SHARE_ID")
+    -u carol:carolpass123 "$WEBDAV_URL/api/v1/shares/$SHARE_ID")
 STILL_EXISTS=$(sqlite3 "$TEST_DB" \
     "SELECT COUNT(*) FROM shares WHERE id='$SHARE_ID';" 2>/dev/null || true)
 if [[ "$S34" == "404" && "$STILL_EXISTS" == "1" ]]; then
@@ -1926,10 +1928,10 @@ login_admin
 
 # ---- C52: Regression — all existing criteria not broken ---------------------
 PF_R=$(curl -s -o /dev/null -w "%{http_code}" -X PROPFIND \
-    -u admin:adminpass123 -H "Depth: 1" "$WEBDAV_URL/")
+    -u carol:carolpass123 -H "Depth: 1" "$WEBDAV_URL/")
 NO_AUTH_R=$(curl -s -o /dev/null -w "%{http_code}" "$WEBDAV_URL/hello.txt")
 SEARCH_R=$(curl -s -o /dev/null -w "%{http_code}" -X SEARCH \
-    -u admin:adminpass123 -H 'Content-Type: application/xml' \
+    -u carol:carolpass123 -H 'Content-Type: application/xml' \
     --data '<?xml version="1.0"?><d:searchrequest xmlns:d="DAV:"><d:basicsearch>
       <d:select><d:prop><d:getetag/></d:prop></d:select>
       <d:from><d:scope><d:href>/</d:href><d:depth>infinity</d:depth></d:scope></d:from>
@@ -2468,7 +2470,7 @@ fi
 stop_server
 write_config 'body_read_idle_timeout = "2s"' 'body_min_rate = 1000' 'body_min_rate_grace = "2s"'
 start_server
-ADMIN_B64=$(printf 'admin:adminpass123' | base64)
+ADMIN_B64=$(printf 'carol:carolpass123' | base64)
 
 # raw_put opens a connection, sends PUT headers for $1 with Content-Length
 # $2, and feeds the body on fd 3 with the shell snippet $3 in the
@@ -2500,10 +2502,10 @@ raw_put() {
 }
 
 # ---- C95: a stalled PUT body is aborted after body_read_idle_timeout ---------
-curl -s -o /dev/null -u admin:adminpass123 -X PUT --data-binary 'stall original' "$V4_URL/stall.txt"
+curl -s -o /dev/null -u carol:carolpass123 -X PUT --data-binary 'stall original' "$V4_URL/stall.txt"
 read -r C95_T C95_STATUS <<<"$(raw_put /stall.txt 100 'printf 0123456789 >&3; sleep 20')"
-C95_CONTENT=$(curl -s -u admin:adminpass123 "$V4_URL/stall.txt" || true)
-C95_TMP=$(find "$DATA_DIR/users/admin" -name '.webdavgo-tmp-*' | wc -l | tr -d ' ')
+C95_CONTENT=$(curl -s -u carol:carolpass123 "$V4_URL/stall.txt" || true)
+C95_TMP=$(find "$DATA_DIR/users/carol" -name '.webdavgo-tmp-*' | wc -l | tr -d ' ')
 C95_LOG=$(grep -c "$LOGMSG"'"request body aborted: stalled" method=PUT path=/stall.txt bytes=10' "$STDOUT_FILE" || true)
 if [[ "$C95_T" =~ ^[0-9]+$ && "$C95_T" -ge 1 && "$C95_T" -le 5 && "$C95_CONTENT" == "stall original" && "$C95_TMP" == "0" && "$C95_LOG" == "1" ]]; then
     check "C95: PUT body stalled > body_read_idle_timeout (2 s) → aborted after ${C95_T}s (status $C95_STATUS), old content kept, no temp file" pass
@@ -2514,13 +2516,13 @@ fi
 # ---- C96: a PUT body below body_min_rate is aborted after the grace period ---
 # 100 bytes every 0.5 s = 200 B/s, under the 1000 B/s minimum, but never idle
 # for long enough to hit the idle timeout.
-curl -s -o /dev/null -u admin:adminpass123 -X PUT --data-binary 'rate original' "$V4_URL/rate.txt"
+curl -s -o /dev/null -u carol:carolpass123 -X PUT --data-binary 'rate original' "$V4_URL/rate.txt"
 CHUNK=$(printf '%0100d' 0)
 # The external printf (via env): a failed write of the builtin leaves its
 # buffer to be flushed into the next command substitution.
 read -r C96_T C96_STATUS <<<"$(raw_put /rate.txt 10000 "for _ in \$(seq 1 16); do env printf '$CHUNK' >&3 || break; sleep 0.5; done")"
-C96_CONTENT=$(curl -s -u admin:adminpass123 "$V4_URL/rate.txt" || true)
-C96_TMP=$(find "$DATA_DIR/users/admin" -name '.webdavgo-tmp-*' | wc -l | tr -d ' ')
+C96_CONTENT=$(curl -s -u carol:carolpass123 "$V4_URL/rate.txt" || true)
+C96_TMP=$(find "$DATA_DIR/users/carol" -name '.webdavgo-tmp-*' | wc -l | tr -d ' ')
 C96_LOG=$(grep -c "$LOGMSG"'"request body aborted: below minimum rate" method=PUT path=/rate.txt' "$STDOUT_FILE" || true)
 if [[ "$C96_T" =~ ^[0-9]+$ && "$C96_T" -ge 2 && "$C96_T" -le 4 && "$C96_CONTENT" == "rate original" && "$C96_TMP" == "0" && "$C96_LOG" == "1" ]]; then
     check "C96: PUT at 200 B/s < body_min_rate 1000 B/s → aborted after the 2 s grace (${C96_T}s, status $C96_STATUS), old content kept, no temp file" pass
@@ -2656,7 +2658,7 @@ C128_ADMIN=$(gui -o /dev/null -w '%{http_code}' "$WEBGUI_URL/admin/login" || tru
 stop_server
 sqlite3 "$TEST_DB" "UPDATE settings SET value='127.0.0.1:8080' WHERE key='webdav_addr';"
 start_server
-C128_LOOP=$(status_of admin:adminpass123)
+C128_LOOP=$(status_of carol:carolpass123)
 C128_LOOP_WARN=$(grep -c "$LOGMSG"'"webdav listener not started' "$STDOUT_FILE" || true)
 stop_server
 sqlite3 "$TEST_DB" "UPDATE settings SET value=':8080' WHERE key='webdav_addr';"
@@ -2740,7 +2742,7 @@ write_config 'acme_email = "file@example.com"' 'tls_mode = "off"'
 start_server
 login_admin
 C131_LOCK_STATUS=$(agui "$WEBGUI_URL/admin/status" | grep -cF "$(src tls_mode off 'config file')" || true)
-C131_LOCK_DAV=$(status_of admin:adminpass123)
+C131_LOCK_DAV=$(status_of carol:carolpass123)
 C131_LOCK_PAGE=$(agui "$WEBGUI_URL/admin/domain" | grep -c "tls_mode is set in $CONFIG_FILE" || true)
 C131_LOCK_POST=$(agui -o /dev/null -w '%{http_code}' -X POST "$WEBGUI_URL/admin/domain" -d "domain=x.example.com" || true)
 stop_server
@@ -2824,13 +2826,13 @@ fi
 write_config 'response_write_idle_timeout = "2s"'
 start_server
 dd if=/dev/zero of="$TEST_DIR/big.bin" bs=1048576 count=32 2>/dev/null
-curl -s -o /dev/null -u admin:adminpass123 -X PUT --data-binary @"$TEST_DIR/big.bin" "$V4_URL/big.bin"
-C136_FULL=$(curl -s -u admin:adminpass123 -o "$TEST_DIR/big.dl" -w '%{size_download}' "$V4_URL/big.bin" || true)
+curl -s -o /dev/null -u carol:carolpass123 -X PUT --data-binary @"$TEST_DIR/big.bin" "$V4_URL/big.bin"
+C136_FULL=$(curl -s -u carol:carolpass123 -o "$TEST_DIR/big.dl" -w '%{size_download}' "$V4_URL/big.bin" || true)
 # The server's side is what matters: once the write deadline hits, the
 # handler ends and the slot is free, even while curl still drains the
 # kernel buffers at 4 KB/s.
 T0=$(date +%s)
-curl -s -u admin:adminpass123 --limit-rate 4k --max-time 60 -o /dev/null "$V4_URL/big.bin" &
+curl -s -u carol:carolpass123 --limit-rate 4k --max-time 60 -o /dev/null "$V4_URL/big.bin" &
 C136_CURL=$!
 C136_LOG=0
 for _ in $(seq 1 80); do
@@ -2842,8 +2844,8 @@ C136_T=$(( $(date +%s) - T0 ))
 kill "$C136_CURL" 2>/dev/null || true; wait "$C136_CURL" 2>/dev/null || true
 # Attributes are matched one by one: client= and others sit between them.
 C136_REQ=$(grep "${LOGMSG}request " "$STDOUT_FILE" | grep -F ' method=GET ' | grep -F ' path=/big.bin ' \
-    | grep -F ' user=admin ' | grep -c -F ' status=200 ' || true)
-curl -s -o /dev/null -u admin:adminpass123 -X DELETE "$V4_URL/big.bin"
+    | grep -F ' user=carol ' | grep -c -F ' status=200 ' || true)
+curl -s -o /dev/null -u carol:carolpass123 -X DELETE "$V4_URL/big.bin"
 stop_server
 if [[ "$C136_FULL" == "33554432" && "$C136_LOG" == "1" && "$C136_T" -le 15 && "$C136_REQ" == "2" ]]; then
     check "C136: 32 MiB download at full speed completes; a client reading 4 KB/s is cut by response_write_idle_timeout (2 s) after ${C136_T}s, its request ends" pass
@@ -2932,7 +2934,7 @@ EOF
     # https prints the status of an HTTPS PROPFIND; headers land in $HDR_F.
     https() {
         curl -s -o /dev/null -D "$HDR_F" -w '%{http_code}' --resolve "$ACME_DOMAIN:8080:127.0.0.1" \
-            --cacert "$ACME_DIR/trust.pem" -u admin:adminpass123 -X PROPFIND -H 'Depth: 0' "$ACME_URL/" || true
+            --cacert "$ACME_DIR/trust.pem" -u carol:carolpass123 -X PROPFIND -H 'Depth: 0' "$ACME_URL/" || true
     }
 
     ADMIN_CA="$ACME_DIR/data/certs/admin-selfsigned.crt"; TOTP_DB="$ACME_DIR/data/webdavgo.db"
@@ -2941,6 +2943,8 @@ EOF
     enrol "$(cookie_of "$(gui -D - -o /dev/null -X POST "$WEBGUI_URL/setup?token=$ACME_TOKEN" \
         -d "username=admin&password=adminpass123&password_confirm=adminpass123")")"
     ADMIN_SECRET="$ENROL_SECRET"; ADMIN_STEP="$ENROL_STEP"
+    SESSION=$(cookie_of "$ENROL_HDRS"); CSRF=$(csrf_of "$SESSION" /admin/users)
+    agui -o /dev/null -X POST "$WEBGUI_URL/admin/users" -d "username=carol&password=carolpass123&role=user"
     C98_READY=$(wait_cert && echo yes || echo no)
 
     # ---- C98: certificate via TLS-ALPN-01, HTTPS PROPFIND, SAN ------------
@@ -2968,8 +2972,8 @@ EOF
     # ---- C100: plain HTTP is refused by the TLS listener ------------------
     # Go answers 400 to plaintext that starts like GET/HEAD/POST/PUT/OPTIONS
     # and closes the connection for anything else, such as PROPFIND.
-    C100_GET=$(curl -s -D - -u admin:adminpass123 "http://127.0.0.1:8080/" || true)
-    C100_PF=$(curl -s -D - -u admin:adminpass123 -X PROPFIND -H 'Depth: 0' "http://127.0.0.1:8080/" || true)
+    C100_GET=$(curl -s -D - -u carol:carolpass123 "http://127.0.0.1:8080/" || true)
+    C100_PF=$(curl -s -D - -u carol:carolpass123 -X PROPFIND -H 'Depth: 0' "http://127.0.0.1:8080/" || true)
     C100_GET_STATUS=$(echo "$C100_GET" | head -1 | awk '{print $2}' || true)
     C100_PF_STATUS=$(echo "$C100_PF" | head -1 | awk '{print $2}' || true)
     C100_WWWA=$(printf '%s\n%s\n' "$C100_GET" "$C100_PF" | grep -ci '^www-authenticate:' || true)
@@ -3080,7 +3084,7 @@ EOF
     }
     https443() {
         curl -s -o /dev/null -D "$HDR_F" -w '%{http_code}' --resolve "$ACME_DOMAIN:443:127.0.0.1" \
-            --cacert "$ACME_DIR/trust443.pem" -u admin:adminpass123 -X PROPFIND -H 'Depth: 0' "https://$ACME_DOMAIN/" || true
+            --cacert "$ACME_DIR/trust443.pem" -u carol:carolpass123 -X PROPFIND -H 'Depth: 0' "https://$ACME_DOMAIN/" || true
     }
     orders443() { grep -c 'Added order' "$ACME_DIR/pebble443.log" || true; }
 
@@ -3093,13 +3097,14 @@ EOF
         -d "username=admin&password=adminpass123&password_confirm=adminpass123")")"
     ADMIN_SECRET="$ENROL_SECRET"; ADMIN_STEP="$ENROL_STEP"
     SESSION=$(cookie_of "$ENROL_HDRS"); CSRF=$(csrf_of "$SESSION" /admin/users)
+    agui -o /dev/null -X POST "$WEBGUI_URL/admin/users" -d "username=carol&password=carolpass123&role=user"
     C137_NEXT=$(grep -c 'href="/admin/domain" hx-boost="false">I have saved them' "$TEST_DIR/recovery.html" || true)
     C137_PAGE=$(agui -o /dev/null -w '%{http_code}' "$WEBGUI_URL/admin/domain" || true)
-    curl -s -o /dev/null -u admin:adminpass123 -X PUT --data-binary 'before' "$V4_URL/wiz.txt"
+    curl -s -o /dev/null -u carol:carolpass123 -X PUT --data-binary 'before' "$V4_URL/wiz.txt"
     wizard_run "$ACME_DOMAIN"
     C137_MSG=$(grep -c 'class="error">Cannot talk to the certificate authority (https://127.0.0.1:1/dir)' "$TEST_DIR/progress.html" || true)
     C137_DETAILS=$(grep -c '<details><summary>Details</summary>' "$TEST_DIR/progress.html" || true)
-    C137_OLD=$(status_of admin:adminpass123)
+    C137_OLD=$(status_of carol:carolpass123)
     C137_443=$(curl -s -o /dev/null --max-time 2 -w '%{http_code}' -k "https://127.0.0.1:443/" || true)
     C137_DB=$(sqlite3 "$WIZ_DIR/webdavgo.db" "SELECT COUNT(*) FROM settings WHERE key IN ('tls_mode','domain');" 2>/dev/null || echo 1)
     C137_ORDERS=$(orders443)
@@ -3116,9 +3121,9 @@ EOF
     start_server
     login_admin
     dd if=/dev/zero of="$TEST_DIR/wiz16.bin" bs=1048576 count=16 2>/dev/null
-    curl -s -o /dev/null -u admin:adminpass123 -X PUT --data-binary @"$TEST_DIR/wiz16.bin" "$V4_URL/wiz16.bin"
+    curl -s -o /dev/null -u carol:carolpass123 -X PUT --data-binary @"$TEST_DIR/wiz16.bin" "$V4_URL/wiz16.bin"
     # A download that runs across the switch must finish on the old listener.
-    curl -s -u admin:adminpass123 --limit-rate 1M -o /dev/null -w '%{size_download}' "$V4_URL/wiz16.bin" >"$TEST_DIR/inflight.txt" &
+    curl -s -u carol:carolpass123 --limit-rate 1M -o /dev/null -w '%{size_download}' "$V4_URL/wiz16.bin" >"$TEST_DIR/inflight.txt" &
     C138_DL=$!
     sleep 1
     wizard_run "$ACME_DOMAIN"

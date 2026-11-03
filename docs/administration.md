@@ -41,6 +41,46 @@ minimum.
   ssh -N -L 8443:localhost:8443 user@dav.example.com
   ```
 
+## Users and roles
+
+Every account has one of two roles:
+
+- **user**: signs in to WebDAV and to the share API (`/api/v1/shares`)
+  with username and password (HTTP Basic Auth). Has its own files and quota.
+- **admin**: signs in to the admin UI with password and TOTP. **An admin
+  account cannot use WebDAV or the share API, not even with the correct
+  password.** A Basic Auth login by an admin gets the same 401 as a wrong
+  password, so a client cannot tell the two apart, and it counts as a failed
+  login for the brute-force protection. The server logs it at Warn as
+  `webdav auth refused: admin account` (see
+  [Authentication cache and request log](#authentication-cache-and-request-log)).
+  Files an admin account stored earlier stay in its data directory
+  untouched.
+
+Anyone who administers the server and also wants to sync files needs two
+accounts, for example `alice` (role user) for WebDAV and `alice-admin`
+(role admin) for the admin UI. The admin created during setup is an admin
+account, so create at least one user account before connecting a client.
+
+Share recipients are not accounts. They access `/s/<share_id>/` with their
+email and share token, see [shares.md](shares.md).
+
+**Adding users.** **Admin → Users → Add user** asks for username, password,
+role and quota. The password field is prefilled with a random suggestion
+in plain text, so it can be copied and passed on. **New suggestion** replaces
+it with another one. A typed password works as well, at least 8 characters.
+A suggestion has 20 random characters in four groups of five joined by
+dashes, e.g. `Kx7mR-pW4ta-9bQhE-u3NcV`. The dashes are part of the password.
+The characters are letters and digits without `0 O o 1 l I` (easy to
+confuse) and `y Y z Z` (swapped between German and US keyboard layouts),
+52 in all, which gives about 114 bits. The server generates them with a
+cryptographic random source.
+
+**Resetting a password.** *Set new password* in a user's row works the same
+way: the field holds a fresh suggestion, **New suggestion** replaces it, and
+any password of at least 8 characters is accepted. A reset ends that user's
+admin sessions and drops the user's entry in the authentication cache.
+
 ## Two-factor authentication (TOTP)
 
 Every admin needs TOTP (RFC 6238: SHA-1, 6 digits, 30 s). Login is two steps:
@@ -174,14 +214,18 @@ The cache
 holds an HMAC-SHA256 of the password under a random key generated at process
 start, never the password. A different or wrong password always goes through
 bcrypt, failed logins are never cached, and a password reset or user deletion
-drops the user's entry. The admin UI login always uses bcrypt. Share
+drops the user's entry. Refused admin logins are never cached either. Every
+answer from the cache also reads the account's role from the database: once
+a user's role is changed to admin, the entry is dropped at the next request
+and the login is refused. The admin UI login always uses bcrypt. Share
 recipients are unaffected (their token check is a SHA-256 lookup).
 
 The cache only learns about password resets and deletions made through the
-admin UI. If you change or delete a user directly in the database (for
-example with `sqlite3`), the old password keeps working for up to
-`auth_cache_ttl` on clients that logged in before. Restart the server, or
-wait that long, after such a change.
+admin UI. If you change the password of a user or delete a user directly in
+the database (for example with `sqlite3`), the old password keeps working
+for up to `auth_cache_ttl` on clients that logged in before. Restart the
+server, or wait that long, after such a change. A role change to admin
+takes effect at once.
 
 Every request on the WebDAV listener produces one `request` line,
 including rejected logins (401, no `user` field):
@@ -212,6 +256,7 @@ to the `request` line. No password, token or code is ever logged.
 | Message | When | Fields |
 |---|---|---|
 | `webdav auth failed` | user Basic Auth (WebDAV or `/api/v1/`) with credentials that failed the password check | `username` (as attempted), `client`, `method`, `path` |
+| `webdav auth refused: admin account` | user Basic Auth (WebDAV or `/api/v1/`) with the correct password of an admin account. The client gets the same 401 as for a wrong password | `username`, `client`, `method`, `path` |
 | `share auth failure` | unknown share ID, or wrong recipient email or token (the line does not say which, like the 401). No line without credentials or with an empty share ID | `share_id`, `claimed_email` (both cut to 64 bytes), `client` |
 | `share token expired` | correct share credentials after `expires_at` (401, not counted as a failure) | `share_id` (cut to 64 bytes), `client` |
 | `auth refused: throttled` | 429 because the client is locked out or the account is throttled | `client`, `source` (`WebDAV user auth` or `share token`), `username` (user auth only), `scope` (`client` or `account`), `retry_after` |

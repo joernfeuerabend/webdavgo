@@ -3,7 +3,9 @@
 ## Lifecycle
 
 1. A webdavgo user (the *owner*) calls `POST /api/v1/shares`, authenticated
-   via Basic Auth with their webdavgo username and password.
+   via Basic Auth with their webdavgo username and password. Only accounts
+   with role user can do this. Admin accounts get 401, see
+   [Users and roles](administration.md#users-and-roles).
 2. The server generates a `shr_<16hex>` share ID and a `shr_tok_<64hex>` raw
    token (only SHA-256 hash stored). Both are returned **once** in the 201
    response.

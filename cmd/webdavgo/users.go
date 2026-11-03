@@ -81,6 +81,56 @@ func createUser(username, password, role string, quota int64) error {
 	return tx.Commit()
 }
 
+// minPasswordLen is the shortest password the admin UI and setup accept.
+const minPasswordLen = 8
+
+// passwordLongEnough is the password check of the admin UI and setup.
+func passwordLongEnough(pw string) bool {
+	return len(pw) >= minPasswordLen
+}
+
+// passwordAlphabet has the characters of a suggested password: letters and
+// digits without 0 O o, 1 l I, which are easy to confuse, and y Y z Z,
+// which swap places between German and US keyboard layouts. 52 characters.
+const passwordAlphabet = "abcdefghijkmnpqrstuvwxABCDEFGHJKLMNPQRSTUVWX23456789"
+
+// Suggested passwords have passwordGroups groups of passwordGroupLen
+// characters from passwordAlphabet, joined by "-": 20 random characters,
+// about 114 bits.
+const (
+	passwordGroups   = 4
+	passwordGroupLen = 5
+)
+
+// suggestPassword returns a random password for the Add user and password
+// reset forms, e.g. "Kx7mR-pW4ta-9bQhE-u3NcV". The dashes are part of it.
+func suggestPassword() string {
+	const n = len(passwordAlphabet)
+	// Bytes at or above limit are discarded, so that every character is
+	// equally likely.
+	const limit = 256 - 256%n
+	out := make([]byte, 0, passwordGroups*(passwordGroupLen+1)-1)
+	buf := make([]byte, 32)
+	for chars := 0; chars < passwordGroups*passwordGroupLen; {
+		// crypto/rand.Read does not return an error since Go 1.24.
+		rand.Read(buf)
+		for _, b := range buf {
+			if int(b) >= limit {
+				continue
+			}
+			if chars > 0 && chars%passwordGroupLen == 0 {
+				out = append(out, '-')
+			}
+			out = append(out, passwordAlphabet[int(b)%n])
+			chars++
+			if chars == passwordGroups*passwordGroupLen {
+				break
+			}
+		}
+	}
+	return string(out)
+}
+
 // dummyHash is compared against for unknown usernames so that they take as
 // long as a wrong password for a known user; otherwise the response time
 // tells an attacker which usernames exist. It must use bcryptCost.
@@ -90,16 +140,28 @@ const dummyHash = "$2a$12$j8YBqbAukXpuHCmn6t.zjOp5PX0HQzFtKhFMeLeYjwzbYTwSWcQ/W"
 // error means the lookup itself failed and the answer is unknown; callers
 // must not treat that as wrong credentials.
 func checkPassword(username, password string) (bool, error) {
+	ok, _, err := checkPasswordRole(username, password)
+	return ok, err
+}
+
+// checkPasswordRole is checkPassword that also returns the account's role
+// when the password is valid. Hash and role come from one query, so the
+// bcrypt check costs the same for every role and the response time does
+// not tell which accounts are admins.
+func checkPasswordRole(username, password string) (ok bool, role string, err error) {
 	var hash string
-	err := db.QueryRow(`SELECT password_hash FROM users WHERE username = ?`, username).Scan(&hash)
+	err = db.QueryRow(`SELECT password_hash, role FROM users WHERE username = ?`, username).Scan(&hash, &role)
 	if errors.Is(err, sql.ErrNoRows) {
 		bcrypt.CompareHashAndPassword([]byte(dummyHash), []byte(password))
-		return false, nil
+		return false, "", nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("look up user %q: %w", username, err)
+		return false, "", fmt.Errorf("look up user %q: %w", username, err)
 	}
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil, nil
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
+		return false, "", nil
+	}
+	return true, role, nil
 }
 
 // ---- authentication cache ----------------------------------------------------
