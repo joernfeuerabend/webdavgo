@@ -596,6 +596,130 @@ func TestSettingsRefuseAdminLockout(t *testing.T) {
 	}
 }
 
+// TestApplyRefusesAdminLockout covers Apply on its own: the saved list
+// (here written by hand) is checked against the address of the Apply
+// request, and nothing of the section is applied if it would lock the
+// requester out.
+func TestApplyRefusesAdminLockout(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "webdavgo.conf")
+	c := defaultConfig()
+	c.DataDir, c.ConfigFile, c.ConfigRead = dir, path, path
+	c.resolve()
+	clientListTestEnv(t, c)
+	if err := os.WriteFile(path, []byte("webgui_allowed_clients = \"198.51.100.0/24\"\nshutdown_timeout = 7\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := savedConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var v settingsView
+	err = applySection("network", saved, "admin", "203.0.113.5:40000", &v)
+	if err == nil || !strings.Contains(err.Error(), "Refused: your current address 203.0.113.5 is not in this list") {
+		t.Fatalf("Apply from outside the saved list: err %v", err)
+	}
+	if !strings.Contains(v.errs["webgui_allowed_clients"], "203.0.113.5") {
+		t.Errorf("field error %q", v.errs["webgui_allowed_clients"])
+	}
+	if conf().WebGUIAllowedClients != "" || conf().ShutdownTimeout != c.ShutdownTimeout {
+		t.Errorf("section partly applied: list %q, shutdown_timeout %v", conf().WebGUIAllowedClients, conf().ShutdownTimeout)
+	}
+	// A mapped address is checked in its IPv4 form.
+	if err := applySection("network", saved, "admin", "[::ffff:203.0.113.5]:40000", &settingsView{}); err == nil {
+		t.Error("Apply from the mapped form of an address outside the list was not refused")
+	}
+
+	// From an address in the list, and over loopback, Apply goes through.
+	for _, remote := range []string{"198.51.100.9:40000", "[::1]:40000"} {
+		setConf(c)
+		v = settingsView{}
+		if err := applySection("network", saved, "admin", remote, &v); err != nil {
+			t.Fatalf("Apply from %s: %v", remote, err)
+		}
+		if conf().WebGUIAllowedClients != "198.51.100.0/24" || conf().ShutdownTimeout != 7*time.Second {
+			t.Errorf("Apply from %s: list %q, shutdown_timeout %v", remote, conf().WebGUIAllowedClients, conf().ShutdownTimeout)
+		}
+	}
+}
+
+// TestACMEDeniedConnsSkipPerIPLimit: on the WebDAV listener with tls_mode
+// acme, connections from outside the list wait for the handshake that
+// drops them without a place in max_connections_per_ip, so they never
+// show up as rate-limited.
+func TestACMEDeniedConnsSkipPerIPLimit(t *testing.T) {
+	c := defaultConfig()
+	c.WebDAVAllowedClients = "192.0.2.1"
+	c.MaxConnectionsPerIP = 1
+	clientListTestEnv(t, c)
+	cert, err := loadOrCreateAdminCert(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := &tls.Config{NextProtos: []string{"h2", "http/1.1", acmeALPN}, Certificates: []tls.Certificate{cert}}
+	base.GetConfigForClient = clientListGetConfigForClient(base)
+	addr := startClientListServer(t, true, base)
+	loopback := clientPrefix(netip.MustParseAddr("127.0.0.1"))
+	refusedBefore := limitRefusals(loopback)
+
+	// Three connections that hold off the ClientHello, more than the limit.
+	var conns []net.Conn
+	for range 3 {
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		conns = append(conns, conn)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for deniedConns() < 3 {
+		if time.Now().After(deadline) {
+			t.Fatalf("accepted denied connections: %d, want 3", deniedConns())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := connLimits[statWebDAV].maxOpen(); n != 0 {
+		t.Errorf("denied connections hold %d per-IP places, want 0", n)
+	}
+	if got := limitRefusals(loopback); got != refusedBefore {
+		t.Errorf("per-IP refusals for 127.0.0.1: %d, want %d", got, refusedBefore)
+	}
+	// Each one is still open and only ends in the handshake.
+	for i, conn := range conns {
+		conn.SetDeadline(time.Now().Add(5 * time.Second))
+		if tc := tls.Client(conn, &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"http/1.1"}}); tc.Handshake() == nil {
+			t.Errorf("connection %d: handshake completed", i)
+		}
+	}
+}
+
+// deniedConns counts the open WebDAV connections marked at accept.
+func deniedConns() int {
+	running.conns.mu.Lock()
+	defer running.conns.mu.Unlock()
+	n := 0
+	for _, ci := range running.conns.conns {
+		if ci.raw != nil && ci.raw.listener == statWebDAV && ci.raw.deniedAtAccept && !ci.raw.closed.Load() {
+			n++
+		}
+	}
+	return n
+}
+
+// limitRefusals returns the per-IP connection refusals recorded for p on
+// the WebDAV listener.
+func limitRefusals(p netip.Prefix) int64 {
+	states, _ := limited.states(time.Now())
+	for _, s := range states {
+		if s.kind == limitConns && s.listener == statWebDAV && s.client == prefixKey(p) {
+			return s.refused
+		}
+	}
+	return 0
+}
+
 func TestSecurityPageShowsClientListDrops(t *testing.T) {
 	c := defaultConfig()
 	c.WebDAVAllowedClients = "192.0.2.0/24"

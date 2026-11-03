@@ -110,9 +110,12 @@ func (l *countingListener) release() { <-l.sem }
 // address outside the listener's list (clientAllowed) with a reset, before
 // the TLS handshake and before net/http sees it, and without counting it
 // for max_connections_per_ip or any other limit. On the WebDAV listener
-// with tls_mode acme such a connection is only marked; see
-// clientListGetConfigForClient. A connection beyond max_connections_per_ip
-// is closed here as well. Accept goes on with the next connection.
+// with tls_mode acme such a connection is only marked, see
+// clientListGetConfigForClient. It keeps its max_connections slot but takes
+// no place in max_connections_per_ip and is not counted as a client
+// connection, so it never shows up as rate-limited. A connection beyond
+// max_connections_per_ip is closed here as well. Accept goes on with the
+// next connection.
 func (l *countingListener) Accept() (net.Conn, error) {
 	for {
 		select {
@@ -145,7 +148,7 @@ func (l *countingListener) Accept() (net.Conn, error) {
 				cc.denied.Store(true)
 			}
 		}
-		if cc.addr.IsValid() {
+		if cc.addr.IsValid() && !cc.deniedAtAccept {
 			p := clientPrefix(cc.addr)
 			cl := connLimits[l.listener]
 			n, ok := cl.acquire(p)

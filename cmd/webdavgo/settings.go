@@ -719,7 +719,7 @@ func handleSettingsPOST(w http.ResponseWriter, r *http.Request) {
 		renderPage(w, r, "settings", settingsData(saved, nil, v))
 		return
 	}
-	if err := applySection(id, saved, currentUser(r), &v); err != nil {
+	if err := applySection(id, saved, currentUser(r), r.RemoteAddr, &v); err != nil {
 		v.errMsg = err.Error()
 	}
 	renderPage(w, r, "settings", settingsData(saved, nil, v))
@@ -827,10 +827,22 @@ func parseSection(id string, saved Config, r *http.Request) (Config, map[string]
 // running process can take them, and reports the outcome in v. TLS values
 // with tls_mode acme are not its business: they take effect through the
 // certificate request, which the TLS section's POST starts itself.
-func applySection(id string, saved Config, by string, v *settingsView) error {
+func applySection(id string, saved Config, by, remoteAddr string, v *settingsView) error {
 	for _, fe := range saved.fieldErrors() {
 		if slices.ContainsFunc(defsOf(id), func(d settingDef) bool { return d.key == fe.Key }) {
 			return fmt.Errorf("not applied: the saved %s is invalid: %w", fe.Key, fe.Err)
+		}
+	}
+	// The saved list may come from a hand edit or from a Save made at
+	// another address: Apply checks it against the address of this
+	// request, and applies nothing of the section if it would lock the
+	// requester out.
+	if slices.ContainsFunc(defsOf(id), func(d settingDef) bool { return d.key == "webgui_allowed_clients" }) {
+		if err := adminLockoutError(saved.WebGUIAllowedClients, remoteAddr); err != nil {
+			v.errs = map[string]string{"webgui_allowed_clients": err.Error()}
+			logger.Warn("settings not applied: admin client list would lock out the requester",
+				"section", id, "client", addrHost(remoteAddr), "by", by)
+			return err
 		}
 	}
 	var applied, waiting []string
