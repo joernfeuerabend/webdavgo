@@ -65,7 +65,7 @@ func handleShareRequest(w http.ResponseWriter, r *http.Request, rl *requestLog) 
 	// to prevent share-ID enumeration.
 	if share == nil {
 		// Both values are the client's own strings here, of any length.
-		logger.Warn("share auth failure", "share_id", truncateKey(shareID),
+		logWarnLimited(r, "share auth failure", "share_id", truncateKey(shareID),
 			"claimed_email", truncateKey(claimedEmail), "client", remoteIP(r))
 		shareAuthFailed(w, r)
 		return
@@ -75,7 +75,7 @@ func handleShareRequest(w http.ResponseWriter, r *http.Request, rl *requestLog) 
 	// passes even while the client is locked out (see bruteforce.go).
 	if strings.ToLower(claimedEmail) != share.RecipientEmail ||
 		shareTokenHash(rawToken) != share.TokenHash {
-		logger.Warn("share auth failure", "share_id", truncateKey(shareID),
+		logWarnLimited(r, "share auth failure", "share_id", truncateKey(shareID),
 			"claimed_email", truncateKey(claimedEmail), "client", remoteIP(r))
 		shareAuthFailed(w, r)
 		return

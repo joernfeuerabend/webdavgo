@@ -339,7 +339,7 @@ func handleTOTPPOST(w http.ResponseWriter, r *http.Request) {
 		renderThrottled(w, r, "totp", wait)
 		return
 	}
-	if ok, wait := limiter.reserveAccountCheck(user); !ok {
+	if ok, wait := limiter.reserveAccountCheck(ip, user, authSrcAdmin); !ok {
 		logLoginThrottled(r, user, "second factor", "account", wait)
 		renderThrottled(w, r, "totp", wait)
 		return
@@ -362,6 +362,7 @@ func handleTOTPPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	upgradeSession(w, sc)
+	limiter.succeed(ip, user, authSrcAdmin)
 	stats.adminLogin()
 	logger.Info("login success", "username", user, "client", remoteIP(r), "second_factor", kind)
 	http.Redirect(w, r, "/admin/", http.StatusSeeOther)
@@ -450,6 +451,7 @@ func handleEnrolPOST(w http.ResponseWriter, r *http.Request) {
 		exitSetupMode()
 		next = "/admin/settings#tls"
 	}
+	limiter.succeed(clientKey(r), user, authSrcAdmin)
 	stats.adminLogin()
 	logger.Info("login success", "username", user, "client", remoteIP(r), "second_factor", "enrolment")
 	// Shown in this response only: the database keeps nothing but hashes.

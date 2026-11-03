@@ -73,7 +73,7 @@ func handleAPIRequest(w http.ResponseWriter, r *http.Request, rl *requestLog) {
 		res, method, wait, err = authenticateUserLimited(r, username, password)
 		rl.authDone(method, authStart)
 		if err != nil {
-			logger.Error("api auth lookup failed", "method", r.Method, "path", r.URL.Path, "err", err)
+			logger.Error("api auth lookup failed", "method", logValue(r.Method), "path", logValue(r.URL.Path), "err", err)
 			w.Header().Set("Retry-After", "30")
 			writeJSONError(w, "service temporarily unavailable", http.StatusServiceUnavailable)
 			return
