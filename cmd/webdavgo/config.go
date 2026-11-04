@@ -70,6 +70,12 @@ type Config struct {
 	BruteforceAccountInterval  time.Duration `toml:"bruteforce_account_interval"`
 	BruteforceMaxEntries       int           `toml:"bruteforce_max_entries"`
 
+	// AdminSessionMaxAge is the overall lifetime of a full admin session
+	// from its creation; AdminSessionIdleTimeout ends it earlier when no
+	// request counting as activity arrives for that long.
+	AdminSessionMaxAge      time.Duration `toml:"admin_session_max_age"`
+	AdminSessionIdleTimeout time.Duration `toml:"admin_session_idle_timeout"`
+
 	BodyReadIdleTimeout time.Duration `toml:"body_read_idle_timeout"`
 	BodyMinRate         int64         `toml:"body_min_rate"`
 	BodyMinRateGrace    time.Duration `toml:"body_min_rate_grace"`
@@ -210,6 +216,9 @@ func defaultConfig() Config {
 		BruteforceAccountThreshold: 20,
 		BruteforceAccountInterval:  5 * time.Second,
 		BruteforceMaxEntries:       100000,
+
+		AdminSessionMaxAge:      24 * time.Hour,
+		AdminSessionIdleTimeout: time.Hour,
 
 		BodyReadIdleTimeout: 30 * time.Second,
 		BodyMinRate:         1000,
@@ -1102,6 +1111,8 @@ func (c Config) checkGeneral() []fieldError {
 		{"bruteforce_lockout_base", c.BruteforceLockoutBase},
 		{"bruteforce_lockout_max", c.BruteforceLockoutMax},
 		{"bruteforce_account_interval", c.BruteforceAccountInterval},
+		{"admin_session_max_age", c.AdminSessionMaxAge},
+		{"admin_session_idle_timeout", c.AdminSessionIdleTimeout},
 		{"body_read_idle_timeout", c.BodyReadIdleTimeout},
 		{"response_write_idle_timeout", c.ResponseWriteIdleTimeout},
 	} {
@@ -1272,6 +1283,8 @@ func (c Config) logAttrs() []any {
 		"bruteforce_account_threshold", c.BruteforceAccountThreshold,
 		"bruteforce_account_interval", c.BruteforceAccountInterval.String(),
 		"bruteforce_max_entries", c.BruteforceMaxEntries,
+		"admin_session_max_age", c.AdminSessionMaxAge.String(),
+		"admin_session_idle_timeout", c.AdminSessionIdleTimeout.String(),
 		"body_read_idle_timeout", c.BodyReadIdleTimeout.String(),
 		"body_min_rate", c.BodyMinRate,
 		"body_min_rate_grace", c.BodyMinRateGrace.String(),

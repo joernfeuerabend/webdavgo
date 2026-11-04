@@ -85,7 +85,6 @@ const (
 )
 
 const (
-	sessionTTL = 24 * time.Hour
 	// A pending session is only good for typing a code. Keeping it short
 	// limits what a stolen password plus a stolen cookie are worth.
 	pendingSessionTTL = 5 * time.Minute
@@ -97,7 +96,13 @@ type session struct {
 	stage       sessionStage
 	csrf        string
 	enrolSecret string // stageEnrol: the unconfirmed secret shown to the user
-	expiresAt   time.Time
+	// created and lastActive bound a full session: admin_session_max_age
+	// from created, admin_session_idle_timeout from lastActive. Both
+	// limits are read from conf() at each check, so Apply changes them for
+	// existing sessions too. expiresAt bounds a pending session only.
+	created    time.Time
+	lastActive time.Time
+	expiresAt  time.Time
 	// epoch is the user's session epoch at creation; a higher one in the
 	// database (bumped by reset-totp) ends the session.
 	epoch int64
@@ -122,10 +127,6 @@ func newSession(username string, stage sessionStage) (string, session) {
 	b := make([]byte, 32)
 	rand.Read(b)
 	id := hex.EncodeToString(b)
-	ttl := sessionTTL
-	if stage != stageFull {
-		ttl = pendingSessionTTL
-	}
 	epoch, err := sessionEpoch(username)
 	if err != nil {
 		// The session then fails the epoch check in requireSession and
@@ -133,7 +134,9 @@ func newSession(username string, stage sessionStage) (string, session) {
 		logger.Error("cannot read session epoch", "user", username, "err", err)
 		epoch = -1
 	}
-	s := session{username: username, stage: stage, csrf: newCSRFToken(), expiresAt: time.Now().Add(ttl), epoch: epoch}
+	now := time.Now()
+	s := session{username: username, stage: stage, csrf: newCSRFToken(),
+		created: now, lastActive: now, expiresAt: now.Add(pendingSessionTTL), epoch: epoch}
 	sessionsMu.Lock()
 	sessions[id] = s
 	sessionsMu.Unlock()
@@ -141,21 +144,34 @@ func newSession(username string, stage sessionStage) (string, session) {
 	return id, s
 }
 
-// lookupSession returns the session id names. slide extends a full
-// session's expiry; polling requests pass false, so that a page left open
-// does not keep its session alive forever.
-func lookupSession(id string, slide bool) (session, bool) {
+// expired reports whether s has ended at now. A full session ends at
+// whichever comes first: admin_session_max_age after its creation or
+// admin_session_idle_timeout after its last activity. A pending session
+// ends at expiresAt.
+func (s session) expired(now time.Time, c *Config) bool {
+	if s.stage != stageFull {
+		return now.After(s.expiresAt)
+	}
+	return now.After(s.created.Add(c.AdminSessionMaxAge)) || now.After(s.lastActive.Add(c.AdminSessionIdleTimeout))
+}
+
+// lookupSession returns the session id names. activity records a request
+// that counts against the idle timeout of a full session; polling requests
+// pass false, so that a page left open does not keep its session alive.
+// Activity never extends the overall lifetime.
+func lookupSession(id string, activity bool) (session, bool) {
 	sessionsMu.Lock()
 	defer sessionsMu.Unlock()
 	s, ok := sessions[id]
-	if !ok || time.Now().After(s.expiresAt) {
+	now := time.Now()
+	if !ok || s.expired(now, conf()) {
 		delete(sessions, id)
 		return session{}, false
 	}
-	// Sliding window for full sessions only: a pending one must not be kept
-	// alive by reloading the code page.
-	if slide && s.stage == stageFull {
-		s.expiresAt = time.Now().Add(sessionTTL)
+	// Full sessions only: a pending one must not be kept alive by reloading
+	// the code page.
+	if activity && s.stage == stageFull {
+		s.lastActive = now
 		sessions[id] = s
 	}
 	return s, true
@@ -206,8 +222,9 @@ func activeSessionCount() int {
 	defer sessionsMu.Unlock()
 	count := 0
 	now := time.Now()
+	c := conf()
 	for id, s := range sessions {
-		if now.After(s.expiresAt) {
+		if s.expired(now, c) {
 			delete(sessions, id)
 		} else if s.stage == stageFull {
 			count++
@@ -250,7 +267,7 @@ func pendingPath(stage sessionStage) string {
 }
 
 // pollPaths are the fragments the Status and Live Log pages fetch every few
-// seconds. They do not extend the session (see lookupSession).
+// seconds. They do not count as activity (see lookupSession).
 var pollPaths = map[string]bool{
 	"/admin/dashboard/webdav":   true, // the Dashboard's WebDAV block
 	"/admin/status/connections": true,
