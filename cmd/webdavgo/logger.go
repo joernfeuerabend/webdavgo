@@ -478,3 +478,29 @@ func (b *logBuffer) query(minLevel slog.Level, text string) (matches []logEntry,
 	}
 	return matches, len(all), capacity
 }
+
+// Values a client chooses (paths, header values, usernames before they are
+// validated) enter log lines with a length cap, so that one request cannot
+// write up to a megabyte into the log. A cut value ends with a marker that
+// gives its original length.
+const (
+	logValueMaxBytes = 256
+	logUserMaxBytes  = 32 // the longest name usernameRE accepts
+)
+
+// logValue caps a path or header value for a log line.
+func logValue(s string) string {
+	return capLogValue(s, logValueMaxBytes)
+}
+
+// logUser caps a username for a log line.
+func logUser(s string) string {
+	return capLogValue(s, logUserMaxBytes)
+}
+
+func capLogValue(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return strings.ToValidUTF8(s[:n], "") + fmt.Sprintf("…[truncated, %d bytes]", len(s))
+}

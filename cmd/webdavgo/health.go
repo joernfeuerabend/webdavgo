@@ -61,7 +61,7 @@ func buildHealthHandler() http.Handler {
 		case "/readyz":
 			reason = checkReady()
 		}
-		logger.Debug("request", "listener", "health", "path", r.URL.Path, "client", remoteIP(r), "ok", reason == "")
+		logger.Debug("request", "listener", "health", "path", logValue(r.URL.Path), "client", remoteIP(r), "ok", reason == "")
 		if reason != "" {
 			http.Error(w, reason, http.StatusServiceUnavailable)
 			return

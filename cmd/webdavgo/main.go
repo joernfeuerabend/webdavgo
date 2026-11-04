@@ -143,6 +143,7 @@ func main() {
 	limiter = newBruteForce(*conf())
 	unauthLimiter = newUnauthLimit(*conf())
 	limited = newLimitRegistry(conf().BruteforceMaxEntries)
+	warnLimited = newWarnLimit(conf().BruteforceMaxEntries)
 
 	logger.Info("startup", "version", version)
 
@@ -658,7 +659,7 @@ func buildWebGUIHandler() http.Handler {
 		start := time.Now()
 		w := &statusRecorder{ResponseWriter: rw, status: http.StatusOK}
 		defer func() {
-			logger.Debug("request", "listener", "admin", "method", r.Method, "path", r.URL.Path,
+			logger.Debug("request", "listener", "admin", "method", logValue(r.Method), "path", logValue(r.URL.Path),
 				"client", remoteIP(r), "status", w.status,
 				"duration", fmt.Sprintf("%dms", time.Since(start).Milliseconds()))
 		}()
@@ -670,9 +671,10 @@ func buildWebGUIHandler() http.Handler {
 			w.Header().Set("Cache-Control", "no-store")
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && !sameOrigin(r) {
-			logger.Warn("admin request rejected: cross-origin", "method", r.Method, "path", r.URL.Path,
-				"client", remoteIP(r), "origin", r.Header.Get("Origin"), "referer", r.Header.Get("Referer"),
-				"sec_fetch_site", r.Header.Get("Sec-Fetch-Site"))
+			logWarnLimited(r, "admin request rejected: cross-origin", "method", logValue(r.Method),
+				"path", logValue(r.URL.Path), "client", remoteIP(r),
+				"origin", logValue(r.Header.Get("Origin")), "referer", logValue(r.Header.Get("Referer")),
+				"sec_fetch_site", logValue(r.Header.Get("Sec-Fetch-Site")))
 			http.Error(w, "forbidden: cross-origin request", http.StatusForbidden)
 			return
 		}
@@ -899,7 +901,7 @@ func isBodyTooLarge(err error) bool {
 // that their access was revoked (clients may then delete local copies), so a
 // transient fault must surface as 503 instead.
 func serviceUnavailable(w http.ResponseWriter, r *http.Request, msg string, err error) {
-	logger.Error(msg, "method", r.Method, "path", r.URL.Path, "err", err)
+	logger.Error(msg, "method", logValue(r.Method), "path", logValue(r.URL.Path), "err", err)
 	w.Header().Set("Retry-After", "30")
 	http.Error(w, "service temporarily unavailable", http.StatusServiceUnavailable)
 }
@@ -922,7 +924,7 @@ func (l *requestLog) authDone(method string, began time.Time) {
 }
 
 func (l *requestLog) write(r *http.Request, status int) {
-	attrs := []any{"method", r.Method, "path", r.URL.Path, "client", remoteIP(r)}
+	attrs := []any{"method", logValue(r.Method), "path", logValue(r.URL.Path), "client", remoteIP(r)}
 	if l.user != "" {
 		attrs = append(attrs, "user", l.user)
 	}

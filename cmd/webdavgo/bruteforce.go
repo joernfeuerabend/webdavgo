@@ -12,8 +12,19 @@ package main
 //     no bcrypt check runs for that client.
 //   - Per account: after many failures for one username, from any number
 //     of clients, at most one bcrypt check per interval runs for it. This
-//     slows distributed guessing down without ever locking the real user
-//     out, which a hard account lock would let any attacker do.
+//     slows distributed guessing down. A request refused by this throttle
+//     counts as a failure toward the lockout of its client, so polling for
+//     the free slot locks the poller out. Clients that logged in to the
+//     account within the last 30 days are exempt, so an attacker who keeps
+//     the throttle engaged does not lock the real user out of their known
+//     devices. The admin login (password and second factor) and WebDAV
+//     plus the API keep separate throttle state: failures on one side
+//     never throttle the other.
+//
+// A username that usernameRE rejects never reaches the account throttle or
+// bcrypt. It is answered like a wrong password and counts toward the
+// client's lockout only, so attacker-chosen names never become keys in the
+// account tables.
 //
 // Throttled requests get 429 with Retry-After, never 401: share clients
 // treat 401 as "access revoked" and may delete their local copies.
@@ -32,8 +43,9 @@ import (
 // limiter is set in main from the configuration.
 var limiter = newBruteForce(defaultConfig())
 
-// authSource is the login path a failure came from. All paths share one
-// limiter, so that guessing on one path also locks the others; the source
+// authSource is the login path a failure came from. All paths share the
+// client lockout, so that guessing on one path also locks the others. The
+// account throttle is kept apart for the admin login. Otherwise the source
 // is kept only so the Security page can say where a lockout came from.
 type authSource int
 
@@ -80,11 +92,28 @@ type bruteForce struct {
 	// many addresses or usernames cannot exhaust memory.
 	maxEntries int
 
-	mu         sync.Mutex
-	ips        map[string]*ipRecord
-	accounts   map[string]*accountRecord
+	mu  sync.Mutex
+	ips map[string]*ipRecord
+	// accounts throttles WebDAV and API logins, adminAccounts the admin
+	// login. Both are keyed by usernames that match usernameRE.
+	accounts      map[string]*accountRecord
+	adminAccounts map[string]*accountRecord
+	// trusted holds the last successful login of a client to an account.
+	// Such a client is exempt from that account's throttle for trustedFor.
+	trusted    map[trustKey]time.Time
 	lastSweep  time.Time
 	fullLogged bool
+}
+
+// trustedFor is how long a successful login exempts its client from the
+// throttle of that account.
+const trustedFor = 30 * 24 * time.Hour
+
+// trustKey is a client (clientKey form) that logged in to username on one
+// side: admin is the admin login, otherwise WebDAV and the API.
+type trustKey struct {
+	username, client string
+	admin            bool
 }
 
 type ipRecord struct {
@@ -114,7 +143,17 @@ func newBruteForce(c Config) *bruteForce {
 		maxEntries:       c.BruteforceMaxEntries,
 		ips:              map[string]*ipRecord{},
 		accounts:         map[string]*accountRecord{},
+		adminAccounts:    map[string]*accountRecord{},
+		trusted:          map[trustKey]time.Time{},
 	}
+}
+
+// accountTable returns the throttle table of the side src belongs to.
+func (b *bruteForce) accountTable(src authSource) map[string]*accountRecord {
+	if src == authSrcAdmin {
+		return b.adminAccounts
+	}
+	return b.accounts
 }
 
 // setParams applies changed settings (Apply on the Settings page). Records
@@ -190,14 +229,17 @@ func (b *bruteForce) ipLocked(ip string) (bool, time.Duration) {
 	return true, rec.lockedUntil.Sub(now)
 }
 
-// reserveAccountCheck reports whether a bcrypt check for username may run
-// now. While the account is throttled it grants one check per interval and
-// returns the wait until the next one otherwise.
-func (b *bruteForce) reserveAccountCheck(username string) (bool, time.Duration) {
+// reserveAccountCheck reports whether a credential check for username by
+// client ip on the login path src may run now. While the account is
+// throttled it grants one check per interval and returns the wait until the
+// next one otherwise. A client that logged in to the account within
+// trustedFor is not throttled. A refusal counts as a failure toward the
+// lockout of ip.
+func (b *bruteForce) reserveAccountCheck(ip, username string, src authSource) (bool, time.Duration) {
 	now := time.Now()
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	rec := b.accounts[username]
+	rec := b.accountTable(src)[username]
 	if rec == nil {
 		return true, 0
 	}
@@ -206,11 +248,69 @@ func (b *bruteForce) reserveAccountCheck(username string) (bool, time.Duration) 
 		rec.throttled = false
 		return true, 0
 	}
+	if b.trustedLocked(trustKey{username, ip, src == authSrcAdmin}, now) {
+		return true, 0
+	}
 	if wait := rec.lastCheck.Add(b.accountInterval).Sub(now); wait > 0 {
+		b.sweepLocked(now)
+		b.ipFailLocked(ip, src, now)
 		return false, wait
 	}
 	rec.lastCheck = now
 	return true, 0
+}
+
+// trustedLocked reports whether k logged in within trustedFor.
+func (b *bruteForce) trustedLocked(k trustKey, now time.Time) bool {
+	t, ok := b.trusted[k]
+	return ok && now.Sub(t) < trustedFor
+}
+
+// succeed records a successful login by client ip to username on the login
+// path src, which exempts ip from that account's throttle for trustedFor.
+// The table is bounded by maxEntries. When it is full the oldest entry of
+// the same side goes, so that logins to user accounts cannot push the
+// admins' clients out.
+func (b *bruteForce) succeed(ip, username string, src authSource) {
+	now := time.Now()
+	k := trustKey{username, ip, src == authSrcAdmin}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if t, ok := b.trusted[k]; ok {
+		// Cache hits call this on every request. A fresh entry needs no
+		// write.
+		if now.Sub(t) >= time.Minute {
+			b.trusted[k] = now
+		}
+		return
+	}
+	b.sweepLocked(now)
+	if len(b.trusted) >= b.maxEntries {
+		b.evictTrustedLocked(k.admin)
+	}
+	b.trusted[k] = now
+}
+
+// evictTrustedLocked drops the oldest entry of the side admin, or the
+// oldest of all if that side has none.
+func (b *bruteForce) evictTrustedLocked(admin bool) {
+	var oldest, oldestAny trustKey
+	var oldestAt, oldestAnyAt time.Time
+	found, foundAny := false, false
+	for k, t := range b.trusted {
+		if !foundAny || t.Before(oldestAnyAt) {
+			oldestAny, oldestAnyAt, foundAny = k, t, true
+		}
+		if k.admin == admin && (!found || t.Before(oldestAt)) {
+			oldest, oldestAt, found = k, t, true
+		}
+	}
+	switch {
+	case found:
+		delete(b.trusted, oldest)
+	case foundAny:
+		delete(b.trusted, oldestAny)
+	}
 }
 
 // fail records a failed authentication by client ip for username on the
@@ -222,28 +322,12 @@ func (b *bruteForce) fail(ip, username string, src authSource) {
 	defer b.mu.Unlock()
 	b.sweepLocked(now)
 
-	if rec := b.ipRecordLocked(ip, now); rec != nil && !now.Before(rec.lockedUntil) {
-		rec.sources[src]++
-		rec.failures = append(pruneBefore(rec.failures, now.Add(-b.window)), now)
-		if len(rec.failures) >= b.ipThreshold {
-			d := b.lockoutBase << rec.lockouts
-			if d > b.lockoutMax || d <= 0 {
-				d = b.lockoutMax
-			} else {
-				rec.lockouts++
-			}
-			rec.lockedUntil = now.Add(d)
-			stats.lockoutStarted(ip)
-			logger.Warn("brute-force lockout started", "client", ip,
-				"failures", len(rec.failures), "duration", d.String(), "source", authSourceNames[src])
-			rec.failures = rec.failures[:0]
-		}
-	}
+	b.ipFailLocked(ip, src, now)
 
 	if username == "" {
 		return
 	}
-	if rec := b.accountRecordLocked(username, now); rec != nil {
+	if rec := b.accountRecordLocked(b.accountTable(src), username, now); rec != nil {
 		rec.sources[src]++
 		rec.failures = append(pruneBefore(rec.failures, now.Add(-b.window)), now)
 		if n := len(rec.failures); n > b.accountThreshold {
@@ -261,6 +345,29 @@ func (b *bruteForce) fail(ip, username string, src authSource) {
 	}
 }
 
+// ipFailLocked counts a failure toward the lockout of client ip.
+func (b *bruteForce) ipFailLocked(ip string, src authSource, now time.Time) {
+	rec := b.ipRecordLocked(ip, now)
+	if rec == nil || now.Before(rec.lockedUntil) {
+		return
+	}
+	rec.sources[src]++
+	rec.failures = append(pruneBefore(rec.failures, now.Add(-b.window)), now)
+	if len(rec.failures) >= b.ipThreshold {
+		d := b.lockoutBase << rec.lockouts
+		if d > b.lockoutMax || d <= 0 {
+			d = b.lockoutMax
+		} else {
+			rec.lockouts++
+		}
+		rec.lockedUntil = now.Add(d)
+		stats.lockoutStarted(ip)
+		logger.Warn("brute-force lockout started", "client", ip,
+			"failures", len(rec.failures), "duration", d.String(), "source", authSourceNames[src])
+		rec.failures = rec.failures[:0]
+	}
+}
+
 func (b *bruteForce) ipRecordLocked(ip string, now time.Time) *ipRecord {
 	rec := b.ips[ip]
 	if rec == nil {
@@ -275,15 +382,15 @@ func (b *bruteForce) ipRecordLocked(ip string, now time.Time) *ipRecord {
 	return rec
 }
 
-func (b *bruteForce) accountRecordLocked(username string, now time.Time) *accountRecord {
-	rec := b.accounts[username]
+func (b *bruteForce) accountRecordLocked(table map[string]*accountRecord, username string, now time.Time) *accountRecord {
+	rec := table[username]
 	if rec == nil {
-		if len(b.accounts) >= b.maxEntries && !b.evictAccountLocked(now) {
+		if len(table) >= b.maxEntries && !b.evictAccountLocked(table, now) {
 			b.logFullLocked("accounts")
 			return nil
 		}
 		rec = &accountRecord{}
-		b.accounts[username] = rec
+		table[username] = rec
 	}
 	rec.lastSeen = now
 	return rec
@@ -307,11 +414,11 @@ func (b *bruteForce) evictIPLocked(now time.Time) bool {
 // stays for the same reason a locked client does: flooding the table with
 // new usernames must not end the throttle on the one being guessed. The
 // scan is linear, but it only runs while the table is full.
-func (b *bruteForce) evictAccountLocked(now time.Time) bool {
+func (b *bruteForce) evictAccountLocked(table map[string]*accountRecord, now time.Time) bool {
 	cutoff := now.Add(-b.window)
 	var oldest string
 	var oldestSeen time.Time
-	for k, rec := range b.accounts {
+	for k, rec := range table {
 		if b.accountThrottledLocked(rec, cutoff) {
 			continue
 		}
@@ -322,7 +429,7 @@ func (b *bruteForce) evictAccountLocked(now time.Time) bool {
 	if oldest == "" {
 		return false
 	}
-	delete(b.accounts, oldest)
+	delete(table, oldest)
 	return true
 }
 
@@ -360,12 +467,19 @@ func (b *bruteForce) sweepLocked(now time.Time) {
 			delete(b.ips, k)
 		}
 	}
-	for k, rec := range b.accounts {
-		if now.Sub(rec.lastSeen) > b.window {
-			delete(b.accounts, k)
+	for _, table := range []map[string]*accountRecord{b.accounts, b.adminAccounts} {
+		for k, rec := range table {
+			if now.Sub(rec.lastSeen) > b.window {
+				delete(table, k)
+			}
 		}
 	}
-	if len(b.ips) < b.maxEntries && len(b.accounts) < b.maxEntries {
+	for k, t := range b.trusted {
+		if now.Sub(t) >= trustedFor {
+			delete(b.trusted, k)
+		}
+	}
+	if len(b.ips) < b.maxEntries && len(b.accounts) < b.maxEntries && len(b.adminAccounts) < b.maxEntries {
 		b.fullLogged = false
 	}
 }
@@ -420,24 +534,27 @@ func (b *bruteForce) clientStates(now time.Time) []clientState {
 }
 
 // throttledAccounts lists accounts whose bcrypt checks are currently
-// rationed, most recent activity first.
+// rationed, most recent activity first. An account throttled both on the
+// admin login and on WebDAV plus the API is listed once per side.
 func (b *bruteForce) throttledAccounts(now time.Time) []accountState {
 	b.mu.Lock()
 	var out []accountState
-	for k, rec := range b.accounts {
-		recent := pruneBefore(append([]time.Time(nil), rec.failures...), now.Add(-b.window))
-		n := len(recent)
-		if n < b.accountThreshold {
-			continue
+	for _, table := range []map[string]*accountRecord{b.accounts, b.adminAccounts} {
+		for k, rec := range table {
+			recent := pruneBefore(append([]time.Time(nil), rec.failures...), now.Add(-b.window))
+			n := len(recent)
+			if n < b.accountThreshold {
+				continue
+			}
+			out = append(out, accountState{
+				Username:       k,
+				Failures:       n,
+				NextCheck:      rec.lastCheck.Add(b.accountInterval),
+				ThrottledUntil: recent[n-b.accountThreshold].Add(b.window),
+				LastSeen:       rec.lastSeen,
+				Sources:        rec.sources,
+			})
 		}
-		out = append(out, accountState{
-			Username:       k,
-			Failures:       n,
-			NextCheck:      rec.lastCheck.Add(b.accountInterval),
-			ThrottledUntil: recent[n-b.accountThreshold].Add(b.window),
-			LastSeen:       rec.lastSeen,
-			Sources:        rec.sources,
-		})
 	}
 	b.mu.Unlock()
 	sort.Slice(out, func(i, j int) bool { return out[i].LastSeen.After(out[j].LastSeen) })
@@ -455,9 +572,11 @@ func (b *bruteForce) activeCounts(now time.Time) (clients, accounts int) {
 		}
 	}
 	cutoff := now.Add(-b.window)
-	for _, rec := range b.accounts {
-		if b.accountThrottledLocked(rec, cutoff) {
-			accounts++
+	for _, table := range []map[string]*accountRecord{b.accounts, b.adminAccounts} {
+		for _, rec := range table {
+			if b.accountThrottledLocked(rec, cutoff) {
+				accounts++
+			}
 		}
 	}
 	return clients, accounts
@@ -474,13 +593,15 @@ func (b *bruteForce) unlockClient(key string) bool {
 	return ok
 }
 
-// clearAccount ends the throttle of an account.
+// clearAccount ends the throttle of an account on both sides.
 func (b *bruteForce) clearAccount(username string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	_, ok := b.accounts[username]
+	_, okAdmin := b.adminAccounts[username]
 	delete(b.accounts, username)
-	return ok
+	delete(b.adminAccounts, username)
+	return ok || okAdmin
 }
 
 // pruneBefore drops timestamps older than cutoff from the sorted slice ts.
@@ -515,10 +636,10 @@ func tooManyAttempts(w http.ResponseWriter, wait time.Duration) {
 func logAuthRefused(r *http.Request, src authSource, username, scope string, wait time.Duration) {
 	attrs := []any{"client", remoteIP(r), "source", authSourceNames[src]}
 	if username != "" {
-		attrs = append(attrs, "username", username)
+		attrs = append(attrs, "username", logUser(username))
 	}
 	attrs = append(attrs, "scope", scope, "retry_after", wait.Round(time.Second).String())
-	logger.Warn("auth refused: throttled", attrs...)
+	logWarnLimited(r, "auth refused: throttled", attrs...)
 	countRefusal(r, username, scope)
 }
 
@@ -717,6 +838,127 @@ func logLimitRefusal(k limitKey, now time.Time, msg string, attrs ...any) {
 	logger.Warn(msg, attrs...)
 }
 
+// ---- rate-limited Warn lines ------------------------------------------------
+//
+// Some Warn lines can be triggered by a client without valid credentials
+// with every request: throttled logins, share auth failures and
+// cross-origin admin requests. Each is written at most once per
+// limitLogEvery per client and message, and the next line carries the
+// number suppressed in between.
+
+type warnKey struct {
+	client string // clientKey form
+	msg    string
+}
+
+type warnRecord struct {
+	logged     time.Time // last log line
+	suppressed int64     // lines not written since then
+}
+
+// warnLimit is bounded by bruteforce_max_entries like the limiter tables.
+type warnLimit struct {
+	maxEntries int
+
+	mu        sync.Mutex
+	m         map[warnKey]*warnRecord
+	lastSweep time.Time
+}
+
+var warnLimited = newWarnLimit(defaultConfig().BruteforceMaxEntries)
+
+func newWarnLimit(maxEntries int) *warnLimit {
+	return &warnLimit{maxEntries: maxEntries, m: map[warnKey]*warnRecord{}}
+}
+
+// setMaxEntries applies a changed bruteforce_max_entries.
+func (g *warnLimit) setMaxEntries(n int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.maxEntries = n
+}
+
+// allow reports whether the line k may be written now, and how many lines
+// of k were suppressed since the last one. A line that finds the table full
+// is not written, so that a flood from many addresses cannot flood the log.
+func (g *warnLimit) allow(k warnKey, now time.Time) (bool, int64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.sweepLocked(now)
+	rec := g.m[k]
+	if rec == nil {
+		if len(g.m) >= g.maxEntries && !g.evictLocked(now) {
+			return false, 0
+		}
+		rec = &warnRecord{}
+		g.m[k] = rec
+	}
+	if now.Sub(rec.logged) < limitLogEvery {
+		rec.suppressed++
+		return false, 0
+	}
+	suppressed := rec.suppressed
+	rec.logged, rec.suppressed = now, 0
+	return true, suppressed
+}
+
+// idle reports whether rec has the same effect as no record.
+func (rec *warnRecord) idle(now time.Time) bool {
+	return rec.suppressed == 0 && now.Sub(rec.logged) >= limitLogEvery
+}
+
+// evictLocked drops an idle record, or else the one logged longest ago
+// whose interval is over. Records within their interval stay, so that a
+// flood from many addresses does not reopen the log for one client.
+func (g *warnLimit) evictLocked(now time.Time) bool {
+	var oldest warnKey
+	var oldestRec *warnRecord
+	for k, rec := range g.m {
+		if rec.idle(now) {
+			delete(g.m, k)
+			return true
+		}
+		if now.Sub(rec.logged) < limitLogEvery {
+			continue
+		}
+		if oldestRec == nil || rec.logged.Before(oldestRec.logged) {
+			oldest, oldestRec = k, rec
+		}
+	}
+	if oldestRec == nil {
+		return false
+	}
+	delete(g.m, oldest)
+	return true
+}
+
+// sweepLocked drops idle records and those logged more than 24 h ago, at
+// most once a minute.
+func (g *warnLimit) sweepLocked(now time.Time) {
+	if now.Sub(g.lastSweep) < time.Minute {
+		return
+	}
+	g.lastSweep = now
+	for k, rec := range g.m {
+		if rec.idle(now) || now.Sub(rec.logged) >= 24*time.Hour {
+			delete(g.m, k)
+		}
+	}
+}
+
+// logWarnLimited writes a Warn line triggered by r if warnLimited allows
+// one for the client of r and msg now.
+func logWarnLimited(r *http.Request, msg string, attrs ...any) {
+	ok, suppressed := warnLimited.allow(warnKey{clientKey(r), msg}, time.Now())
+	if !ok {
+		return
+	}
+	if suppressed > 0 {
+		attrs = append(attrs, "suppressed", suppressed)
+	}
+	logger.Warn(msg, attrs...)
+}
+
 // unauthLimit is a token bucket per client for WebDAV requests without
 // credentials. Scanners send hundreds of those per second; a real client
 // sends one or two before it adds its credentials. An idle bucket (full
@@ -881,9 +1123,10 @@ const (
 )
 
 // authenticateUserLimited checks Basic Auth credentials of a user on the
-// WebDAV or API path. method is cache, bcrypt or blocked for the request
-// log; wait is the Retry-After for authThrottled. A non-nil error means the
-// answer is unknown (DB failure) and nothing was counted.
+// WebDAV or API path. method is cache, bcrypt, blocked or invalid (a
+// username usernameRE rejects) for the request log. wait is the Retry-After
+// for authThrottled. A non-nil error means the answer is unknown (DB
+// failure) and nothing was counted.
 //
 // Only accounts with role "user" may log in here. An admin account would
 // otherwise reach the internet-facing listener with its password alone,
@@ -892,6 +1135,10 @@ const (
 // one: if it were not counted, a guesser could tell it apart by the
 // lockout that never comes.
 func authenticateUserLimited(r *http.Request, username, password string) (res authResult, method string, wait time.Duration, err error) {
+	if !usernameRE.MatchString(username) {
+		res, method, wait = rejectInvalidUsername(r, username)
+		return res, method, wait, nil
+	}
 	// The cache comes first so that devices already logged in keep working
 	// while their shared NAT address is locked out by someone else.
 	hit, epoch := authCache.lookup(username, password)
@@ -905,6 +1152,7 @@ func authenticateUserLimited(r *http.Request, username, password string) (res au
 			return authBad, "cache", 0, err
 		}
 		if role == "user" {
+			limiter.succeed(clientKey(r), username, authSrcUser)
 			return authOK, "cache", 0, nil
 		}
 		authCache.invalidate(username)
@@ -915,7 +1163,7 @@ func authenticateUserLimited(r *http.Request, username, password string) (res au
 		logAuthRefused(r, authSrcUser, username, "client", d)
 		return authThrottled, "blocked", d, nil
 	}
-	if ok, d := limiter.reserveAccountCheck(username); !ok {
+	if ok, d := limiter.reserveAccountCheck(ip, username, authSrcUser); !ok {
 		logAuthRefused(r, authSrcUser, username, "account", d)
 		return authThrottled, "blocked", d, nil
 	}
@@ -926,19 +1174,37 @@ func authenticateUserLimited(r *http.Request, username, password string) (res au
 	if !ok {
 		// Before fail, so that a lockout this attempt starts is logged after
 		// the attempt itself.
-		logger.Warn("webdav auth failed", "username", username, "client", remoteIP(r),
-			"method", r.Method, "path", r.URL.Path)
+		logger.Warn("webdav auth failed", "username", logUser(username), "client", remoteIP(r),
+			"method", logValue(r.Method), "path", logValue(r.URL.Path))
 		stats.authFailed(r, failUser, username)
 		limiter.fail(ip, username, authSrcUser)
 		return authBad, "bcrypt", 0, nil
 	}
 	if role != "user" {
-		logger.Warn("webdav auth refused: admin account", "username", username, "client", remoteIP(r),
-			"method", r.Method, "path", r.URL.Path)
+		logger.Warn("webdav auth refused: admin account", "username", logUser(username), "client", remoteIP(r),
+			"method", logValue(r.Method), "path", logValue(r.URL.Path))
 		stats.authFailed(r, failUser, username)
 		limiter.fail(ip, username, authSrcUser)
 		return authBad, "bcrypt", 0, nil
 	}
 	authCache.store(username, password, epoch)
+	limiter.succeed(ip, username, authSrcUser)
 	return authOK, "bcrypt", 0, nil
+}
+
+// rejectInvalidUsername answers a user login whose username usernameRE
+// rejects. No such account can exist, so no account throttle and no bcrypt
+// check is involved and the name becomes no limiter key. The attempt is
+// answered and counted toward the client's lockout like a wrong password.
+func rejectInvalidUsername(r *http.Request, username string) (authResult, string, time.Duration) {
+	ip := clientKey(r)
+	if locked, d := limiter.ipLocked(ip); locked {
+		logAuthRefused(r, authSrcUser, username, "client", d)
+		return authThrottled, "blocked", d
+	}
+	logger.Warn("webdav auth failed", "username", logUser(username), "client", remoteIP(r),
+		"method", logValue(r.Method), "path", logValue(r.URL.Path), "reason", "invalid username")
+	stats.authFailed(r, failUser, username)
+	limiter.fail(ip, "", authSrcUser)
+	return authBad, "invalid", 0
 }

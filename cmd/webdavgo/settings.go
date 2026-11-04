@@ -969,6 +969,7 @@ func applyRuntime(c *Config) {
 	authCache.setTTL(c.AuthCacheTTL)
 	limiter.setParams(c)
 	limited.setMaxEntries(c.BruteforceMaxEntries)
+	warnLimited.setMaxEntries(c.BruteforceMaxEntries)
 	unauthLimiter.setParams(c)
 }
 

@@ -427,7 +427,17 @@ func handleLoginPOST(w http.ResponseWriter, r *http.Request) {
 		renderThrottled(w, r, "login", wait)
 		return
 	}
-	if ok, wait := limiter.reserveAccountCheck(uname); !ok {
+	// No account can have such a name: answered and counted like a wrong
+	// password, without the account throttle or a bcrypt check.
+	if !usernameRE.MatchString(uname) {
+		stats.authFailed(r, failAdminPassword, uname)
+		limiter.fail(ip, "", authSrcAdmin)
+		logger.Warn("login failed", "username", logUser(uname), "client", remoteIP(r),
+			"reason", "invalid username")
+		renderPage(w, r, "login", map[string]any{"Error": "Invalid username or password"})
+		return
+	}
+	if ok, wait := limiter.reserveAccountCheck(ip, uname, authSrcAdmin); !ok {
 		logLoginThrottled(r, uname, "password", "account", wait)
 		renderThrottled(w, r, "login", wait)
 		return
@@ -467,7 +477,7 @@ func handleLoginPOST(w http.ResponseWriter, r *http.Request) {
 // limiter; scope says whether the client or the account is throttled. Every
 // caller answers 429, so it also counts the refusal.
 func logLoginThrottled(r *http.Request, username, step, scope string, wait time.Duration) {
-	logger.Warn("login refused: throttled", "username", username, "client", remoteIP(r),
+	logWarnLimited(r, "login refused: throttled", "username", logUser(username), "client", remoteIP(r),
 		"step", step, "scope", scope, "retry_after", wait.Round(time.Second).String())
 	countRefusal(r, username, scope)
 }
@@ -752,7 +762,7 @@ func handleUserTOTPReset(w http.ResponseWriter, r *http.Request) {
 		}
 		// The code check is a guess like a login: a hijacked session from
 		// many addresses must hit the account throttle, too.
-		if ok, wait := limiter.reserveAccountCheck(self); !ok {
+		if ok, wait := limiter.reserveAccountCheck(ip, self, authSrcAdmin); !ok {
 			logLoginThrottled(r, self, "own totp reset", "account", wait)
 			tooManyAttempts(w, wait)
 			return
