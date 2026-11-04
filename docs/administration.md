@@ -180,6 +180,14 @@ created later at a path that still has entries gets them back.
   `Referrer-Policy: same-origin` (browsers then send a real `Origin` on the
   UI's own POSTs, and nothing leaks to other sites). Pages also carry
   `Cache-Control: no-store`.
+- A full admin session ends `admin_session_max_age` (default 24 h) after
+  sign-in, whatever the activity, or earlier when no request counting as
+  activity arrives for `admin_session_idle_timeout` (default 1 h). NIST
+  SP 800-63B-4 recommends for AAL2 an overall timeout of no more than 24
+  hours and an inactivity timeout of no more than 1 hour. Larger values are
+  accepted, and **Admin → Settings** shows a warning next to the field.
+  Apply changes both limits for existing sessions too. A pending session
+  (password accepted, second factor not yet entered) lasts 5 minutes.
 - All sessions of a user end when the user is deleted, the password is reset
   or the TOTP is reset (also by `reset-totp` from the shell). Every admin request also checks that the user still
   exists and still is an admin.
@@ -392,8 +400,9 @@ transfer rate since the previous refresh. Query strings are never shown. A
 connection leaves the list when it closes.
 
 The polling requests (`/admin/status/connections`, `/admin/status/activity`,
-`/admin/logs/entries`) need a valid admin session but do not extend its 24 h sliding expiry, so a
-tab left open does not keep the session alive. When the session has ended, the
+`/admin/logs/entries`) need a valid admin session but do not count as activity for
+`admin_session_idle_timeout`, so a tab left open does not keep the session
+alive. When the session has ended, the
 poll answers with `HX-Redirect` and the browser goes to the login page.
 
 ## Status: activity

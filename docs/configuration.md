@@ -80,6 +80,8 @@ as one `config` line.
 | `bruteforce_account_threshold` | `20` | failures per username within the window that start the account throttle |
 | `bruteforce_account_interval` | `5` | seconds between password checks while an account is throttled |
 | `bruteforce_max_entries` | `100000` | size limit of the client table and of the account table |
+| `admin_session_max_age` | `86400` | seconds a full admin session lives from sign-in, activity never extends it (see [Sessions, CSRF and headers](administration.md#sessions-csrf-and-headers)) |
+| `admin_session_idle_timeout` | `3600` | seconds without activity after which a full admin session ends |
 | `body_read_idle_timeout` | `30` | seconds a request body may send nothing before it is aborted |
 | `body_min_rate` | `1` | minimum average body rate in KB/s, `0` disables the check |
 | `body_min_rate_grace` | `60` | seconds before `body_min_rate` is checked |
@@ -94,9 +96,9 @@ durations in whole seconds, sizes in KB and rates in KB/s (decimal, 1 KB =
 
 ## Settings page
 
-**Admin → Settings** shows every key above in one of nine sections (Network &
+**Admin → Settings** shows every key above in one of ten sections (Network &
 listeners, TLS & domain, Connections & limits, Brute-force protection,
-WebDAV, Users, Logging, Health, Updates), each with its saved value, a short description and its
+Admin sessions, WebDAV, Users, Logging, Health, Updates), each with its saved value, a short description and its
 default, plus the config file path. Every field is editable except where
 there is a technical reason, which is shown next to the field: `data_dir`
 (the database lives in it), the config file path (set by the service unit or
@@ -109,7 +111,8 @@ there is a technical reason, which is shown next to the field: `data_dir`
 - **Apply** saves the form first, then makes the section's saved values
   effective in the running server without a restart and without ending the
   admin session: limits, rates, timeouts read per request, brute-force and
-  unauthenticated-rate parameters, `auth_cache_ttl`, `log_level`,
+  unauthenticated-rate parameters, the admin session timeouts (for
+  existing sessions too), `auth_cache_ttl`, `log_level`,
   `log_buffer_entries` and `update_prereleases` at once. A changed port or listen address of a
   listener moves it: the new one starts, the old one finishes its running
   requests (up to `shutdown_timeout`) and closes. After moving the admin

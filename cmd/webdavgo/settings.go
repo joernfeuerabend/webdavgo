@@ -308,6 +308,7 @@ var settingSections = []struct{ id, title, intro string }{
 	{"tls", "TLS & domain", ""},
 	{"limits", "Connections & limits", "Per-client limits count an IPv4 address or an IPv6 /64 as one client."},
 	{"bruteforce", "Brute-force protection", "Failed logins (WebDAV/API Basic Auth, share tokens, admin login) are counted per client."},
+	{"sessions", "Admin sessions", "A full admin session (password and second factor accepted) ends at whichever limit is reached first. Apply changes both limits for existing sessions too. The status and log refreshes of an open page do not count as activity."},
 	{"webdav", "WebDAV", ""},
 	{"users", "Users", ""},
 	{"logging", "Logging", ""},
@@ -384,6 +385,9 @@ var settingDefs = []settingDef{
 	{key: "bruteforce_account_interval", label: "Throttled account check interval", section: "bruteforce", desc: "One password check per interval while an account is throttled."},
 	{key: "bruteforce_max_entries", label: "Max. table entries", section: "bruteforce", desc: "Size limit of the client and account tables and of the rate-limit tables."},
 
+	{key: "admin_session_max_age", label: "Overall session lifetime", section: "sessions", desc: "A full admin session ends this long after sign-in, whatever the activity."},
+	{key: "admin_session_idle_timeout", label: "Inactivity timeout", section: "sessions", desc: "A full admin session ends when no request counting as activity arrives for this long."},
+
 	{key: "data_dir", label: "Data directory", section: "webdav", desc: "Directory for the database (webdavgo.db) and user files (users/<name>/)."},
 	{key: "max_request_body", label: "Max. request body", section: "webdav", desc: "Maximum request body for every method except PUT; larger bodies get 413."},
 	{key: "max_dead_props_size", label: "Max. dead properties per resource", section: "webdav", desc: "Maximum total size of the dead properties of one resource; a PROPPATCH that would exceed it fails with 507 for the properties concerned. 0 = unlimited."},
@@ -404,6 +408,32 @@ var settingDefs = []settingDef{
 	{key: "update_prereleases", label: "Offer pre-releases", section: "updates",
 		desc:    "Offer signed pre-releases (such as v1.2.3-rc.1) on the Update page besides final releases. Off: final releases only.",
 		warning: "Pre-releases are test builds. They can be unstable and can damage data or configuration. They are not meant for production servers. Turn this on only on a test server."},
+}
+
+// nistLimits are the NIST SP 800-63B-4 values for AAL2 (password plus
+// TOTP) in seconds. A larger value is accepted and saved, but the field
+// shows a warning.
+var nistLimits = map[string]struct {
+	max  int64
+	text string
+}{
+	"admin_session_max_age": {24 * 3600,
+		"Exceeds the NIST SP 800-63B-4 recommendation for AAL2: the overall timeout should be no more than 24 hours (86400 seconds)."},
+	"admin_session_idle_timeout": {3600,
+		"Exceeds the NIST SP 800-63B-4 recommendation for AAL2: the inactivity timeout should be no more than 1 hour (3600 seconds)."},
+}
+
+// limitWarning returns the warning for value, as the form shows it, of
+// key, or "" if there is none.
+func limitWarning(key, value string) string {
+	l, ok := nistLimits[key]
+	if !ok {
+		return ""
+	}
+	if n, err := strconv.ParseInt(value, 10, 64); err == nil && n > l.max {
+		return l.text
+	}
+	return ""
 }
 
 // Every key of the file must be on the page exactly once.
@@ -593,6 +623,9 @@ func settingsData(saved Config, loadErr error, v settingsView) map[string]any {
 			if raw, ok := form[d.key]; ok {
 				f.Value = raw
 				f.Checked = raw != ""
+			}
+			if w := limitWarning(d.key, f.Value); w != "" {
+				f.Warning = w
 			}
 			if slices.Contains(acmeKeys, d.key) {
 				f.ACME, f.Disabled = true, tlsMode == "off"
