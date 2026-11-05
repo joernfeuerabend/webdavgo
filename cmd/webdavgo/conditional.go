@@ -26,9 +26,11 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"golang.org/x/net/webdav"
 )
@@ -341,6 +343,17 @@ func serveDAV(w http.ResponseWriter, r *http.Request, h *webdav.Handler, absPath
 		return
 	}
 
+	// Checked before the lock and before any of the body is read: a PUT
+	// with an X-OC-Mtime the owner accepts but that is no integer is
+	// answered 400 and nothing is stored.
+	var mtime *time.Time
+	if r.Method == http.MethodPut {
+		var ok bool
+		if mtime, ok = ocMtime(w, r, owner); !ok {
+			return
+		}
+	}
+
 	key, err := filepath.Abs(absPath)
 	if err != nil {
 		logger.Error("cannot resolve absolute path", "path", absPath, "err", err)
@@ -414,10 +427,54 @@ func serveDAV(w http.ResponseWriter, r *http.Request, h *webdav.Handler, absPath
 	// x/net reads r.Body itself and passes r.Context() to OpenFile; the
 	// tracker travels through the context so davFS can tell a complete
 	// upload from an aborted one when the file is closed.
-	body := &putBody{ReadCloser: r.Body, owner: owner}
+	body := &putBody{ReadCloser: r.Body, owner: owner, mtime: mtime}
 	r = r.WithContext(context.WithValue(r.Context(), putBodyKey{}, body))
 	r.Body = body
 	h.ServeHTTP(&quotaWriter{ResponseWriter: w, r: r, body: body}, r)
+}
+
+// ocMtimeHeader is the request header ownCloud and Nextcloud clients (rclone
+// with vendor nextcloud among them) send on PUT to set the modification time
+// of the uploaded file, as integer Unix seconds.
+const ocMtimeHeader = "X-OC-Mtime"
+
+// ocMtime returns the modification time a PUT asks for in X-OC-Mtime, or nil
+// when the request has none or the owner of the space does not accept it.
+// The header is then ignored entirely. ok is false when the response has
+// been written: 400 for a value that is no integer, as Nextcloud answers,
+// 503 when the owner's setting could not be read.
+func ocMtime(w http.ResponseWriter, r *http.Request, owner string) (mtime *time.Time, ok bool) {
+	v := r.Header.Values(ocMtimeHeader)
+	if len(v) == 0 {
+		return nil, true
+	}
+	accept, err := userAcceptsOCMtime(owner)
+	if err != nil {
+		serviceUnavailable(w, r, "X-OC-Mtime flag lookup failed", err)
+		return nil, false
+	}
+	if !accept {
+		return nil, true
+	}
+	sec, err := parseOCMtime(strings.Join(v, ","))
+	if err != nil {
+		logger.Debug("invalid X-OC-Mtime", "path", r.URL.Path, "value", logValue(strings.Join(v, ",")))
+		http.Error(w, "X-OC-Mtime header must be an integer (unix timestamp)", http.StatusBadRequest)
+		return nil, false
+	}
+	t := time.Unix(sec, 0)
+	return &t, true
+}
+
+// parseOCMtime parses an X-OC-Mtime value: an optional minus sign and
+// decimal digits, surrounding whitespace allowed.
+func parseOCMtime(v string) (int64, error) {
+	v = strings.TrimSpace(v)
+	digits := strings.TrimPrefix(v, "-")
+	if digits == "" || strings.Trim(digits, "0123456789") != "" {
+		return 0, fmt.Errorf("not an integer: %q", v)
+	}
+	return strconv.ParseInt(v, 10, 64)
 }
 
 // ---- download headers ---------------------------------------------------------
@@ -483,7 +540,8 @@ func logQuotaExceeded(r *http.Request, owner string) {
 		"path", r.URL.Path, "client", remoteIP(r))
 }
 
-// quotaWriter answers a PUT that ran out of quota while streaming with 507.
+// quotaWriter answers a PUT that ran out of quota while streaming with 507,
+// and confirms an X-OC-Mtime that was applied with "X-OC-MTime: accepted".
 // x/net maps every error of copying the body to 405, which would tell the
 // client the method is not allowed rather than that the space is used up.
 type quotaWriter struct {
@@ -494,6 +552,9 @@ type quotaWriter struct {
 }
 
 func (q *quotaWriter) WriteHeader(code int) {
+	if code >= 200 && code < 300 && q.body.mtimeSet {
+		q.ResponseWriter.Header().Set("X-OC-MTime", "accepted")
+	}
 	if code < 400 || !q.body.quotaExceeded {
 		q.ResponseWriter.WriteHeader(code)
 		return
@@ -639,13 +700,16 @@ func davDestination(r *http.Request, h *webdav.Handler) string {
 type putBodyKey struct{}
 
 // putBody records whether the request body was read to a clean EOF, and
-// carries the upload's quota owner to atomicFile.
+// carries the upload's quota owner and the modification time from
+// X-OC-Mtime, if any, to atomicFile.
 type putBody struct {
 	io.ReadCloser
 	eof           bool
 	err           error
 	owner         string
 	quotaExceeded bool
+	mtime         *time.Time // nil: the file keeps the time it was written
+	mtimeSet      bool       // mtime was applied to the uploaded file
 }
 
 func (b *putBody) Read(p []byte) (int, error) {
@@ -801,8 +865,11 @@ func (a *atomicFile) Seek(off int64, whence int) (int64, error) { return a.f.See
 func (a *atomicFile) Readdir(count int) ([]os.FileInfo, error)  { return a.f.Readdir(count) }
 
 // Stat reports the temp file. rename(2) keeps mtime and size, so the ETag x/net
-// derives from it equals the ETag of the target after the commit.
+// derives from it equals the ETag of the target after the commit. x/net calls
+// it once the body is copied and before Close, so the modification time from
+// X-OC-Mtime is set here, before the ETag is computed.
 func (a *atomicFile) Stat() (os.FileInfo, error) {
+	a.applyMtime()
 	fi, err := a.f.Stat()
 	if err != nil {
 		return nil, err
@@ -810,9 +877,29 @@ func (a *atomicFile) Stat() (os.FileInfo, error) {
 	return etagInfo{fi}, nil
 }
 
+// complete reports whether the whole body arrived and every write succeeded.
+func (a *atomicFile) complete() bool {
+	return a.body.eof && a.body.err == nil && a.writeErr == nil
+}
+
+// applyMtime sets the temp file's modification time to the one from
+// X-OC-Mtime once the body is complete. The access time stays. If it fails,
+// the upload is discarded rather than stored with the wrong time.
+func (a *atomicFile) applyMtime() {
+	if a.body.mtime == nil || a.body.mtimeSet || !a.complete() {
+		return
+	}
+	if err := os.Chtimes(a.f.Name(), time.Time{}, *a.body.mtime); err != nil {
+		a.writeErr = fmt.Errorf("set modification time of %s: %w", a.f.Name(), err)
+		return
+	}
+	a.body.mtimeSet = true
+}
+
 func (a *atomicFile) Close() error {
 	tmpName := a.f.Name()
-	complete := a.body.eof && a.body.err == nil && a.writeErr == nil
+	a.applyMtime()
+	complete := a.complete()
 	var err error
 	if complete {
 		// Without fsync a crash right after rename could leave an empty

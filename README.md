@@ -36,7 +36,14 @@ To get a server running, see [Quick start](#quick-start).
 - Conditional requests (`If-Match`, `If-None-Match`), atomic PUT and
   consistent ETags
 - Dead properties (PROPPATCH) stored in the database
-- Standard WebDAV without client-specific extensions
+- Standard WebDAV without client-specific extensions by default
+- Support for the `X-OC-Mtime` request header can be activated per user
+  account and is off by default. rclone and other ownCloud or Nextcloud
+  clients send it on PUT to set the modification time of the uploaded
+  file. With it on, the modification time is a value supplied by the
+  client and no longer shows when a file was actually uploaded. Clients
+  that detect changes by modification time (for example via SEARCH) can
+  miss changes when another client sets an older time
 
 **Users & sharing**
 - Multiple users, each with an isolated data directory and a storage quota

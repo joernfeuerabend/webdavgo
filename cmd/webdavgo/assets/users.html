@@ -44,6 +44,18 @@
                   </form>
                 </div>
               </details>
+              {{if eq .Role "user"}}
+              <details>
+                <summary>Client modification times ({{if .AcceptOCMtime}}on{{else}}off{{end}})</summary>
+                <div>
+                  <form method="post" action="/admin/users/{{.Username}}/oc-mtime{{$.Return}}" hx-boost="false" class="check-form">
+                    {{template "csrf" $}}
+                    {{template "oc-mtime-field" .AcceptOCMtime}}
+                    <button type="submit" class="btn-sm">Save</button>
+                  </form>
+                </div>
+              </details>
+              {{end}}
               <details>
                 <summary>Set new password</summary>
                 <div>
@@ -132,6 +144,7 @@
                  pattern="[0-9]+([.,][0-9]*)?|[.,][0-9]+" title="GB (1 GB = 1,000,000,000 bytes), 0 = unlimited">
           <small>1 GB = 1,000,000,000 bytes; 0 = unlimited.</small>
         </label>
+        {{template "oc-mtime-field" false}}
         <button type="submit">Add user</button>
       </form>
     </div>
@@ -160,6 +173,13 @@
     </svg>
   </button>
 </span>{{end}}
+
+{{/* The X-OC-Mtime checkbox of the Add user form and the per-user setting.
+     The dot is whether it is checked. */}}
+{{define "oc-mtime-field"}}<div class="check-field">
+  <label class="field-check"><input type="checkbox" name="accept_oc_mtime" value="1"{{if .}} checked{{end}}> Accept client modification times (X-OC-Mtime)</label>
+  <small>Lets clients such as rclone set the modification time of uploaded files. The modification time is then a value supplied by the client, not the time the server received the file, so it no longer shows when a file was actually uploaded. Clients that detect changes by modification time (for example via SEARCH) can miss changes when another client sets an older time.</small>
+</div>{{end}}
 
 {{define "password-renew"}}<button type="button" class="btn btn-sm btn-secondary"
         hx-get="/admin/users/password-suggestion?field={{.}}" hx-target="previous .password-field"
