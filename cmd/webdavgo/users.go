@@ -34,6 +34,8 @@ type User struct {
 	TOTP       bool  // admins only: enrolment confirmed
 	QuotaBytes int64 // 0 = unlimited
 	UsedBytes  int64
+	// AcceptOCMtime lets PUT set the modification time from X-OC-Mtime.
+	AcceptOCMtime bool
 }
 
 // UsageLabel is the Users page's storage column, e.g. "0.42 GB / 1 GB".
@@ -59,8 +61,15 @@ func userDataRoot(username string) string {
 	return filepath.Join(conf().DataDir, "users", username)
 }
 
-// createUser adds a user with a storage quota in bytes (0 = unlimited).
+// createUser adds a user with a storage quota in bytes (0 = unlimited) who
+// does not accept X-OC-Mtime.
 func createUser(username, password, role string, quota int64) error {
+	return createUserOCMtime(username, password, role, quota, false)
+}
+
+// createUserOCMtime is createUser with the user's X-OC-Mtime flag, see
+// userAcceptsOCMtime.
+func createUserOCMtime(username, password, role string, quota int64, acceptOCMtime bool) error {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
@@ -70,8 +79,8 @@ func createUser(username, password, role string, quota int64) error {
 		return fmt.Errorf("begin create user: %w", err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)`,
-		username, string(hash), role); err != nil {
+	if _, err := tx.Exec(`INSERT INTO users (username, password_hash, role, accept_oc_mtime) VALUES (?, ?, ?, ?)`,
+		username, string(hash), role, acceptOCMtime); err != nil {
 		return fmt.Errorf("insert user %q: %w", username, err)
 	}
 	if _, err := tx.Exec(`INSERT INTO user_quota (username, quota_bytes) VALUES (?, ?)`,
@@ -285,7 +294,7 @@ func (c *credCache) invalidate(username string) {
 }
 
 const userSelect = `SELECT u.username, u.role, COALESCE(t.enabled, 0),
-		COALESCE(q.quota_bytes, ?), COALESCE(q.used_bytes, 0)
+		COALESCE(q.quota_bytes, ?), COALESCE(q.used_bytes, 0), u.accept_oc_mtime
 	FROM users u LEFT JOIN totp t ON t.username = u.username
 	LEFT JOIN user_quota q ON q.username = u.username`
 
@@ -324,7 +333,7 @@ func queryUsers(query string, args ...any) ([]User, error) {
 	var users []User
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.Username, &u.Role, &u.TOTP, &u.QuotaBytes, &u.UsedBytes); err != nil {
+		if err := rows.Scan(&u.Username, &u.Role, &u.TOTP, &u.QuotaBytes, &u.UsedBytes, &u.AcceptOCMtime); err != nil {
 			return nil, err
 		}
 		users = append(users, u)
@@ -367,6 +376,29 @@ func userRole(username string) (string, error) {
 		return "", fmt.Errorf("look up role of %q: %w", username, err)
 	}
 	return role, nil
+}
+
+// userAcceptsOCMtime reports whether a PUT into the space of username may
+// set the file's modification time from the X-OC-Mtime request header.
+// A user that does not exist does not accept it.
+func userAcceptsOCMtime(username string) (bool, error) {
+	var accept bool
+	err := db.QueryRow(`SELECT accept_oc_mtime FROM users WHERE username = ?`, username).Scan(&accept)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("look up X-OC-Mtime flag of %q: %w", username, err)
+	}
+	return accept, nil
+}
+
+// setUserAcceptOCMtime changes the X-OC-Mtime flag of username.
+func setUserAcceptOCMtime(username string, accept bool) error {
+	if _, err := db.Exec(`UPDATE users SET accept_oc_mtime = ? WHERE username = ?`, accept, username); err != nil {
+		return fmt.Errorf("set X-OC-Mtime flag of %q: %w", username, err)
+	}
+	return nil
 }
 
 func adminExists() (bool, error) {

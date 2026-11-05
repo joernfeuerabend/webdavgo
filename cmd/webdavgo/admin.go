@@ -399,6 +399,7 @@ func NewAdminMux() *http.ServeMux {
 	protected.HandleFunc("POST /admin/users/{name}/delete", handleUserDelete)
 	protected.HandleFunc("POST /admin/users/{name}/reset", handleUserReset)
 	protected.HandleFunc("POST /admin/users/{name}/quota", handleUserQuota)
+	protected.HandleFunc("POST /admin/users/{name}/oc-mtime", handleUserOCMtime)
 	protected.HandleFunc("GET /admin/shares", handleShares)
 	protected.HandleFunc("POST /admin/shares/{share_id}/revoke", handleShareRevoke)
 	protected.HandleFunc("GET /admin/status", handleStatus)
@@ -675,11 +676,13 @@ func handleUsersCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := createUser(uname, pw, role, quota); err != nil {
+	acceptOCMtime := r.FormValue("accept_oc_mtime") != ""
+	if err := createUserOCMtime(uname, pw, role, quota, acceptOCMtime); err != nil {
 		http.Error(w, "could not create user: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	logger.Info("user created", "username", uname, "role", role, "quota_bytes", quota, "by", currentUser(r))
+	logger.Info("user created", "username", uname, "role", role, "quota_bytes", quota,
+		"accept_oc_mtime", acceptOCMtime, "by", currentUser(r))
 	http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
 }
 
@@ -716,6 +719,24 @@ func handleUserQuota(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logger.Info("user quota changed", "username", name, "quota_bytes", quota, "by", currentUser(r))
+	http.Redirect(w, r, usersReturnURL(r), http.StatusSeeOther)
+}
+
+// handleUserOCMtime sets whether PUT into the user's space accepts
+// X-OC-Mtime. An unchecked box sends no field, which turns it off.
+func handleUserOCMtime(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !userExists(name) {
+		http.Error(w, "no such user", http.StatusNotFound)
+		return
+	}
+	accept := r.FormValue("accept_oc_mtime") != ""
+	if err := setUserAcceptOCMtime(name, accept); err != nil {
+		logger.Error("X-OC-Mtime flag change failed", "username", name, "err", err)
+		http.Error(w, "could not change setting", http.StatusInternalServerError)
+		return
+	}
+	logger.Info("user X-OC-Mtime flag changed", "username", name, "accept_oc_mtime", accept, "by", currentUser(r))
 	http.Redirect(w, r, usersReturnURL(r), http.StatusSeeOther)
 }
 
